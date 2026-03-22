@@ -130,7 +130,7 @@ class OnlineSimulator:
                     next_arrival += task.period
 
             # 2. LO Mandatory Interference
-            #存在一个问题，无法确定何时发生模式转换，因此得删去，否则会导致一个optional job 被执行，但是miss deadline.
+            # 这里存在一个问题，无法确定何时发生模式转换，因此得删去，否则会导致一个optional job 被执行，但是miss deadline. 3/22
             # elif task.criticality == "LO" and task.id != job.task_id:
             #     # Filter based on current mode policies
             #     if task.is_backup_subblock:
