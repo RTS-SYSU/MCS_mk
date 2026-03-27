@@ -5,24 +5,6 @@
 This repository contains the ongoing development of a **utility-aware scheduling framework for mixed-criticality systems (MCS)** on multicore platforms.
 
 ---
-
-## 📌 Overview
-
-Modern real-time systems increasingly operate under uncertainty and resource 
-constraints, where strictly pessimistic assumptions may lead to inefficient resource utilization. This project investigates a **utility-aware scheduling framework** that integrates:
----
-
-## 📂 Planned Repository Structure
-
-```
-/model/        System and task models  
-/scheduler/    Core scheduling algorithms  
-/offline/      Pattern generation and optimization  
-/analysis/     Theoretical analysis modules  
-/experiments/  Evaluation scripts and benchmarks  
-```
-
----
 ## ❗ Academic Integrity and Usage Policy
 
 This repository contains **original, unpublished research work**.
