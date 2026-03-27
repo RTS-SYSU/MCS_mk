@@ -72,10 +72,11 @@ class OnlineSimulator:
         # [LOGGING] Initialize logger instance
         self.logger = logging.getLogger("Sim")
 
-    def _get_pattern_bit(self, task: Task, job_seq: int) -> int:
+    def _get_pattern_bit_consecutive(self, task: Task, job_seq: int) -> int:
         """
         Dynamically determine if the job is Mandatory (1) or Optional (0).
         Logic depends on current Mode.
+        Focus on Consecutive Mandatory (1)
         """
         if not task.mk: return 1
 
@@ -96,6 +97,31 @@ class OnlineSimulator:
         normalized_idx = (idx - offset) % k
 
         return 1 if normalized_idx < effective_m else 0
+
+    def _get_pattern_bit(self, task: Task, job_seq: int) -> int:
+        """
+        Dynamically determine if the job is Mandatory (1) or Optional (0).
+        Logic depends on current Mode and task type.
+        Query  pattern list，consecutive pattern（如 [0,1,0,1]）。
+        """
+        if not task.mk:
+            return 1  # default mandatory
+
+        k = task.mk.k
+        idx = job_seq % k  # current job position in mk-pattern
+
+        #not considering optional jobs for subtasks.
+        if task.is_backup_subblock:
+            return task.mk.pattern[idx]
+
+        # other LO tasks
+        if self.mode == 'HI':
+            # degraded mk, x=0
+            base_pattern = [1] * task.mk.m + [0] * (k - task.mk.m)
+            return base_pattern[idx]
+        else:
+            # optimized (m+x,k)
+            return task.mk.pattern[idx]
 
     def _calculate_interference_and_slack(self, job: Job) -> float:
         """
