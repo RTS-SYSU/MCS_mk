@@ -107,6 +107,29 @@ class MKPattern:
     def get_pattern(self):
         return self.pattern
 
+    def merge_pattern(self, other: 'MKPattern') -> 'MKPattern':
+        """
+        将另一个子块的 pattern 按位 OR 合并，返回一个新的 MKPattern。
+        合并不改变原有 '1' 的位置，只是叠加新的 '1'。
+        例如: (0,1,0,0) merge (0,0,1,0) -> (0,1,1,0)
+        """
+        # if self.k != other.k:
+        #     raise ValueError(
+        #         f"Cannot merge patterns with different k: {self.k} vs {other.k}"
+        #     )
+        # 按位 OR 合并
+        merged_pattern = [a | b for a, b in zip(self.pattern, other.pattern)]
+        new_m = sum(merged_pattern)
+
+        # 创建新的 MKPattern，m 直接等于合并后 1 的数量
+        new_mk = MKPattern(m=new_m, k=self.k)
+
+        # 直接覆盖 pattern 为合并结果（绕过 offset 的影响）
+        new_mk.pattern = merged_pattern
+
+        return new_mk
+
+
 
 
     def __repr__(self):

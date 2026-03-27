@@ -13,7 +13,7 @@ def partition_tasks_wfd(original_tasks: List[Task],
     """
     Partitions tasks across multiple processors using the Worst-Fit Decreasing (WFD) algorithm.
 
-    This function is agnostic to the specific schedulability test used.
+    This function is agnostic to the specific schedulability test used. When each task is allocated, the shcedulability test will be performed.
 
     :param original_tasks: List of tasks to be partitioned.
     :param num_processors: Total number of available processors.
@@ -61,7 +61,7 @@ def partition_tasks_wfd(original_tasks: List[Task],
 
     for task in lo_tasks:
 
-        processors.sort(key=lambda p: max(p.utilization_lo, p.utilization_hi))
+        processors.sort(key=lambda p:p.utilization_lo)
         assigned = False
 
         # 预先计算该 LO 任务带来的利用率增量
@@ -85,7 +85,7 @@ def partition_tasks_wfd(original_tasks: List[Task],
     return processors
 
 # --- Step 1: 初始分配 ---
-def partition_step1_initial_assignment(original_tasks: List[Task], num_processors: int) -> Optional[List[Processor]]:
+def partition_initial_assignment(original_tasks: List[Task], num_processors: int) -> Optional[List[Processor]]:
     """
     【Step 1】一次性分配 HI 和 LO 任务到处理器。
     如果在分配过程中，任务无法放入任何核心（导致 U_LO > 1.0 或 U_HI > 1.0），则返回 None。
@@ -126,7 +126,7 @@ def partition_step1_initial_assignment(original_tasks: List[Task], num_processor
 
     for task in lo_tasks:
 
-        processors.sort(key=lambda p: max(p.utilization_lo, p.utilization_hi))
+        processors.sort(key=lambda p: p.utilization_lo)
 
         assigned = False
 
@@ -153,15 +153,14 @@ def partition_step1_initial_assignment(original_tasks: List[Task], num_processor
 
     return processors
 
-
-# --- Step 3: 二次划分 (保持不变) ---
-def partition_step3_reassign_subblocks(
+# splitting and migration mapping
+def partition_reassign_subtasks(
         tasks_to_split: List[Task],
         processors: List[Processor],
         cost_func: Callable[[Task], float]
 ) -> Tuple[List[Task], List[Task]]:
     """
-    【Step 3】将待丢弃的任务进行拆分，并尝试分配备份子块。
+    将待丢弃的任务进行拆分，并尝试分配备份子块。
     【约束】原子性分配：对于一个任务，必须所有 m 个子块都成功分配，否则全部撤销。
     """
 
@@ -189,7 +188,7 @@ def partition_step3_reassign_subblocks(
 
         # --- 事务开始 ---
         current_task_subblocks = []
-        transaction_log = []  # 记录 [(processor, subblock), ...] 以便回滚
+        transaction_log = {}  # 记录 [(processor:subblock), ...] 以便回滚
 
         # 生成该任务的所有子块
         for j in range(m_orig):
@@ -205,12 +204,12 @@ def partition_step3_reassign_subblocks(
             current_task_subblocks.append(sb)
 
         # 尝试分配所有子块
-        task_success = False
+        task_success = True
 
         for sb in current_task_subblocks:
             assigned = False
 
-            # 寻找 HI 负载最小的核心 (因为备份块只增加 HI 负载)
+            # sub-tasks will be activated in HI mode
             processors.sort(key=lambda p: p.utilization_hi)
 
             for p in processors:
@@ -218,15 +217,18 @@ def partition_step3_reassign_subblocks(
                 candidate_tasks = p.tasks + [sb]
                 assign_static_priorities(candidate_tasks)
 
-                # 必须带上 drop_list 进行测试
                 if schedulability_test(candidate_tasks, drop_task=p.drop_list):
-                    # 分配成功，写入状态
-                    p.add_task(sb)
-                    assign_static_priorities(p.tasks)
-
-                    # 记录到事务日志
-                    transaction_log.append((p, sb))
+                    # assigned success
                     assigned = True
+                    if p in transaction_log:
+                        existing_sb = transaction_log[p]
+                        merged_mk = existing_sb.mk.merge_pattern(sb.mk)
+                        existing_sb.mk = merged_mk
+                    else:
+                        p.add_task(sb)
+                        assign_static_priorities(p.tasks)
+                        # 记录到事务日志
+                        transaction_log[p]=sb
                     break
 
             if not assigned:
@@ -236,12 +238,13 @@ def partition_step3_reassign_subblocks(
         # --- 事务提交或回滚 ---
         if task_success:
             # Commit
-            success_subblocks_total.extend(current_task_subblocks)
+            for sb in transaction_log.values():
+                success_subblocks_total.append(sb)
             # print(f"Task {current_task.id} backup success ({m_orig} blocks).")
         else:
             # Rollback
             # 移除所有已分配的子块
-            for p, sb in transaction_log:
+            for p, sb in transaction_log.items():
                 p.remove_task(sb)  # remove_task 会自动扣减利用率
                 assign_static_priorities(p.tasks)
 
