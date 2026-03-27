@@ -48,7 +48,7 @@ class Processor:
             # 只有 LO 任务会被 Drop
             if task.criticality == "LO":
                 eff_factor = task.mk.m / task.mk.k
-                u_dec = (task.wcet_lo / task.period) * eff_factor
+                u_dec = (task.wcet_hi / task.period) * eff_factor # for lo task, wcet_hi= wcet_lo
                 self.utilization_hi -= u_dec
 
     def _update_util(self, task: Task, sign: int = 1):

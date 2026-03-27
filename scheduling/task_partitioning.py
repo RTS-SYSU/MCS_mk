@@ -213,23 +213,47 @@ def partition_reassign_subtasks(
             processors.sort(key=lambda p: p.utilization_hi)
 
             for p in processors:
-                # 试探性加入
-                candidate_tasks = p.tasks + [sb]
-                assign_static_priorities(candidate_tasks)
+                if p in transaction_log:
+                    # ---- 【原地处理合并】 ----
+                    existing_sb = transaction_log[p]
 
-                if schedulability_test(candidate_tasks, drop_task=p.drop_list):
-                    # assigned success
-                    assigned = True
-                    if p in transaction_log:
-                        existing_sb = transaction_log[p]
-                        merged_mk = existing_sb.mk.merge_pattern(sb.mk)
-                        existing_sb.mk = merged_mk
+                    # 1. 暂存原来的 mk，用于一旦测试失败时回滚
+                    old_mk = existing_sb.mk
+
+                    # 2. 生成合并后的 mk，直接原地替换
+                    merged_mk = existing_sb.mk.merge_pattern(sb.mk)
+                    existing_sb.mk = merged_mk
+
+                    # 3. existing_sb 已经在 p.tasks 中，状态已更新
+                    #assign_static_priorities(p.tasks)
+                    if schedulability_test(p.tasks, drop_task=p.drop_list):
+                        assigned = True
+
+                        # 4.增加对应子任务的利用率
+                        # 算出增加了多少个子块 (通常是 1)
+                        m_diff = merged_mk.m - old_mk.m
+                        if m_diff > 0:
+                            # 按照你 Processor.add_task 的逻辑，备份子块增加 utilization_hi
+                            u_inc = (existing_sb.wcet_hi / existing_sb.period) * (m_diff / existing_sb.mk.k)  #wcet_hi=wcet_lo
+                            p.utilization_hi += u_inc
+                        # transaction_log[p] 指向的就是 existing_sb，无需更新
+                        break
                     else:
-                        p.add_task(sb)
+                        # 5. 测试失败，原地回滚 mk
+                        existing_sb.mk = old_mk
+                        #assign_static_priorities(p.tasks)
+
+                else:
+                    # ---- 【首次加入该核心】 ----
+                    candidate_tasks = p.tasks + [sb]
+                    assign_static_priorities(candidate_tasks)
+
+                    if schedulability_test(candidate_tasks, drop_task=p.drop_list):
+                        assigned = True
+                        p.add_task(sb)  # 内部会自动更新利用率
                         assign_static_priorities(p.tasks)
-                        # 记录到事务日志
-                        transaction_log[p]=sb
-                    break
+                        transaction_log[p] = sb
+                        break
 
             if not assigned:
                 task_success = False

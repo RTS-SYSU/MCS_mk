@@ -4,7 +4,7 @@ from core.processor import Processor
 from core.task import Task
 from scheduling.priority_assignment import assign_static_priorities
 from scheduling.sched_test import schedulability_test
-from scheduling.task_partitioning import partition_step1_initial_assignment, partition_step3_reassign_subblocks
+from scheduling.task_partitioning import partition_initial_assignment, partition_reassign_subtasks
 
 
 def cost_utility_utilization(task: Task) -> float:
@@ -76,7 +76,7 @@ def uaswc_offline_multicore(
     """
 
     # 1. 初始分配
-    processors = partition_step1_initial_assignment(original_tasks, num_processors)
+    processors = partition_initial_assignment(original_tasks, num_processors)
     if processors is None: return False, []
 
     tasks_to_be_backed_up = []
@@ -107,7 +107,7 @@ def uaswc_offline_multicore(
 
     # 3. 备份子块分配 (All-or-Nothing)
     # 只有全部子块都能分配成功的任务，其子块才会出现在 processors 中
-    _,_ = partition_step3_reassign_subblocks(
+    _,_ = partition_reassign_subtasks(
         tasks_to_split=tasks_to_be_backed_up,
         processors=processors,
         cost_func=cost_func

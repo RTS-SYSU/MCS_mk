@@ -60,7 +60,7 @@ def run_exp():
         "LUF": (cost_low_util, False),
     }
 
-    TEST_TIMES = 1000
+    TEST_TIMES = 10000
 
     print(">>> Running Core Scalability Experiment...")
     core_counts = [2, 4, 6, 8, 10]

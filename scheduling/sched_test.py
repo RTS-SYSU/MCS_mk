@@ -2,6 +2,7 @@
 import math
 from typing import List, Tuple
 from core.task import Task
+from scheduling.priority_assignment import assign_static_priorities
 
 
 def schedulability_test(tasks: List[Task], drop_task=None) -> bool:
@@ -12,6 +13,8 @@ def schedulability_test(tasks: List[Task], drop_task=None) -> bool:
     :param tasks:a task set
     :return ture or false
     """
+    #assign_static_priorities(tasks)
+
     if drop_task is None:
         drop_task = []
     for task in tasks:
