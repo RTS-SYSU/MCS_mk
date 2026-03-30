@@ -4,7 +4,7 @@ from core.processor import Processor
 from core.task import Task
 from scheduling.priority_assignment import assign_static_priorities
 from scheduling.sched_test import schedulability_test
-from scheduling.task_partitioning import partition_initial_assignment, partition_reassign_subtasks
+from scheduling.task_partitioning import partition_reassign_subtasks, partition_filter
 
 
 def cost_utility_utilization(task: Task) -> float:
@@ -54,18 +54,11 @@ def uaswc_offline_multicore(
     """
     UASWC 多核离线优化主流程。
 
-    流程逻辑：
-    1. 【初始分配】一次性分配 HI 和 LO 任务 (WFD)。
-    2. 【筛选丢弃】若核心不可调度，按 Cost 最低优先筛选 LO 任务移出。
-    3. 【拆分重分配】将移出的任务拆分为 (1,k) 子块，按 Cost 最高优先尝试填回任意核心。
-    4. 【效用优化】对幸存的完整 LO 任务优化 x 参数。
-    5. 【状态固化】生成每个核心的 drop_list (用于在线模拟器在 HI 模式下丢弃 LO 任务)。
-
     Args:
         original_tasks: 原始任务列表。
         num_processors: 处理器核心数量。
-        cost_func: 价值评估函数 (如 utility/wcet)。
-                   - Drop 阶段: 越小越先被丢。
+        cost_func: 价值评估函数。
+                   - Drop 阶段: 不可调度被drop。
                    - Split/Optimize 阶段: 越大越优先保留/优化。
         is_dynamic_strategy: 是否在优化 x 阶段使用动态重排序策略。
 
@@ -75,49 +68,29 @@ def uaswc_offline_multicore(
         - processors: 包含最终任务分配和 drop_list 的处理器列表。
     """
 
-    # 1. 初始分配
-    processors = partition_initial_assignment(original_tasks, num_processors)
+    # 1. init partitioning
+    processors = partition_filter(original_tasks, num_processors)
     if processors is None: return False, []
 
-    tasks_to_be_backed_up = []
-
-    # 2. 调度保障:测试每个处理器
+    split_tasks = []
     for p in processors:
-
-        while not schedulability_test(p.tasks, drop_task=p.drop_list):
-
-            candidates = [t for t in p.tasks
-                          if t.criticality == "LO"
-                          and t not in p.drop_list
-                          and not t.is_backup_subblock]
-
-            if not candidates: return False, processors
-
-            candidates.sort(key=cost_func)
-
-            victim = candidates[0]
-
-            # 原地标记 Drop (LO 继续跑，HI 停止)
-            p.mark_as_dropped(victim)
-
-            # 加入待备份队列
-            tasks_to_be_backed_up.append(victim)
-
-            assign_static_priorities(p.tasks)
+        split_tasks.extend(p.drop_list)
+    assert len(split_tasks) == len({t.id for t in split_tasks}), "Duplicate tasks in split_tasks!"
 
     # 3. 备份子块分配 (All-or-Nothing)
     # 只有全部子块都能分配成功的任务，其子块才会出现在 processors 中
-    _,_ = partition_reassign_subtasks(
-        tasks_to_split=tasks_to_be_backed_up,
+    success_subblocks,failed_tasks = partition_reassign_subtasks(
+        tasks_to_split=split_tasks,
         processors=processors,
         cost_func=cost_func
     )
 
     # 4. 效用优化 (Optimize X)
     for p in processors:
-        # 仅优化：LO 任务，非备份块，且未被 Drop
+        # LO task is optimized, but no sub-task and drop task)
         candidates = [t for t in p.tasks
                       if t.criticality == "LO"
+                      and t not in p.drop_list
                       and not t.is_backup_subblock]
 
         if not candidates: continue
@@ -138,4 +111,3 @@ def uaswc_offline_multicore(
             else:
                 upgradable.remove(target)
     return True, processors
-
