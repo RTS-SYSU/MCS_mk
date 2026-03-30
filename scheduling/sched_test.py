@@ -1,4 +1,3 @@
-
 import math
 from typing import List, Tuple
 from core.task import Task
@@ -13,7 +12,7 @@ def schedulability_test(tasks: List[Task], drop_task=None) -> bool:
     :param tasks:a task set
     :return ture or false
     """
-    #assign_static_priorities(tasks)
+    # assign_static_priorities(tasks)
 
     if drop_task is None:
         drop_task = []
@@ -30,7 +29,7 @@ def schedulability_test(tasks: List[Task], drop_task=None) -> bool:
 
             return False
         # Calculate HI mode WCRT
-        R_hi, ok_hi = calculate_wcrt_hi(task, tasks,drop_task)
+        R_hi, ok_hi = calculate_wcrt_hi(task, tasks, drop_task)
         if not ok_hi:
             # print(f"Task {task.id}: HI mode WCRT exceeded deadline or did not converge")
             return False
@@ -80,6 +79,45 @@ def schedulability_test_AMCrtbWH(tasks: List[Task]) -> bool:
     return True
 
 
+def test_aLO(task: Task, tasks: List[Task]) -> bool:
+    """
+    A schedulability test for a task in LO mode
+    """
+    R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
+    if not ok_lo:
+        return False
+
+    return True
+
+
+def test_aHI(task: Task, tasks: List[Task], drop_task=None) -> bool:
+    """
+    A schedulability test for a task in HI mode
+    """
+    if drop_task is None:
+        drop_task = []
+
+    R_hi, ok_hi = calculate_wcrt_hi(task, tasks, drop_task)
+    if not ok_hi:
+        return False
+
+    return True
+
+
+def test_aMC(task: Task, tasks: List[Task], R_lo: float, drop_task=None) -> bool:
+    """
+    A schedulability test for a task in mode change
+    """
+    if drop_task is None:
+        drop_task = []
+
+    R_mc, ok_mc = calculate_wcrt_mc_terminate(task, tasks, drop_task, R_lo)
+    if not ok_mc:
+        return False
+
+    return True
+
+
 def calculate_wcrt_lo(cur_task: Task, tasks: List[Task], max_iter: int = 1000, tol: float = 1e-6) -> Tuple[float, bool]:
     """
     Calculate the worst-case response time (WCRT) of a task (LO or HI) in LO mode.
@@ -120,7 +158,7 @@ def calculate_wcrt_lo(cur_task: Task, tasks: List[Task], max_iter: int = 1000, t
                 #     num_lo = math.ceil(R_prev / (k_q * task_q.period)) * effective_m
                 # else:
                 #     num_lo = math.ceil(R_prev / (k_q * task_q.period)) * effective_m - max(effective_m - d_q, 0)
-                num_lo = calculate_mk_jobs(R_prev,task_q.period,effective_m,k_q)
+                num_lo = calculate_mk_jobs(R_prev, task_q.period, effective_m, k_q)
                 interference_lo += num_lo * task_q.wcet_lo
         R_lo = C_lo + interference_hi + interference_lo
         # if R_lo < R_prev:
@@ -144,8 +182,8 @@ def calculate_wcrt_lo(cur_task: Task, tasks: List[Task], max_iter: int = 1000, t
     return R_lo, flag
 
 
-
-def calculate_wcrt_hi(cur_task: Task, tasks: List[Task], drop_tasks: List[Task],max_iter: int = 1000, tol: float = 1e-6) -> Tuple[float, bool]:
+def calculate_wcrt_hi(cur_task: Task, tasks: List[Task], drop_tasks: List[Task], max_iter: int = 1000,
+                      tol: float = 1e-6) -> Tuple[float, bool]:
     """
     Calculate the worst-case response time (WCRT) of a task (LO or HI) in HI mode.
 
@@ -177,14 +215,14 @@ def calculate_wcrt_hi(cur_task: Task, tasks: List[Task], drop_tasks: List[Task],
         for task_q in hp_lo:
             m_q = task_q.mk.m
             k_q = task_q.mk.k
-            #d_q = math.ceil(R_prev / task_q.period) % k_q
+            # d_q = math.ceil(R_prev / task_q.period) % k_q
             # if d_q == 0:
             #     num_lo_hi = math.ceil(R_prev / (k_q * task_q.period)) * m_q
             # else:
             #     num_lo_hi = math.ceil(R_prev / (k_q * task_q.period)) * m_q - max(m_q - d_q, 0)
             num_lo_hi = calculate_mk_jobs(R_prev, task_q.period, m_q, k_q)
             interference_lo += num_lo_hi * task_q.wcet_lo
-        R_hi = C_hi + interference_hi + interference_lo  #for LO task, Chi=Clo
+        R_hi = C_hi + interference_hi + interference_lo  # for LO task, Chi=Clo
         if R_hi > cur_task.deadline:
             return R_hi, False
         iter_count += 1
@@ -242,23 +280,40 @@ def calculate_wcrt_mc_terminate(cur_task: Task, tasks: List[Task], drop_tasks: L
         # LO tasks interference in mode change (LO + HI mode contributions combined)
         interference_lo_total = 0
 
+        # for q in hp_lo:
+        #     m_q = q.mk.m
+        #     k_q = q.mk.k
+        #     x_q = q.mk.x
+        #     effective_m_q = m_q + x_q
+        #
+        #     if q in drop_tasks:
+        #         count = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
+        #         interference_lo_total += count * q.wcet_lo
+        #     else:
+        #         count_A = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
+        #
+        #         total_m = calculate_mk_jobs(R_prev, q.period, m_q, k_q)
+        #         pre_m = calculate_mk_jobs(R_lo, q.period, m_q, k_q)
+        #         count_B = max(0, total_m - pre_m)
+        #
+        #         interference_lo_total += (count_A + count_B) * q.wcet_lo
         for q in hp_lo:
             m_q = q.mk.m
             k_q = q.mk.k
             x_q = q.mk.x
             effective_m_q = m_q + x_q
 
-            if q in drop_tasks:
-                count = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
-                interference_lo_total += count * q.wcet_lo
-            else:
-                count_A = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
+            count = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
+            interference_lo_total += count * q.wcet_lo
+
+            if q not in drop_tasks:
+                # count_A = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
 
                 total_m = calculate_mk_jobs(R_prev, q.period, m_q, k_q)
                 pre_m = calculate_mk_jobs(R_lo, q.period, m_q, k_q)
                 count_B = max(0, total_m - pre_m)
 
-                interference_lo_total += (count_A + count_B) * q.wcet_lo
+                interference_lo_total += count_B * q.wcet_lo
         # Update R_mc
         R_mc = C_max + interference_hi + interference_lo_total
         if R_mc > cur_task.deadline:
