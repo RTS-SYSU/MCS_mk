@@ -78,6 +78,50 @@ def schedulability_test_AMCrtbWH(tasks: List[Task]) -> bool:
     # All tasks passed the test
     return True
 
+def schedulability_test_LO(tasks: List[Task], drop_task=None) -> bool:
+    """
+    A schedulability test for MCS simulator with utility constraint based RTA.
+
+    :param drop_task:
+    :param tasks:a task set
+    :return ture or false
+    """
+    # assign_static_priorities(tasks)
+
+    if drop_task is None:
+        drop_task = []
+    for task in tasks:
+        # Calculate LO mode WCRT
+        R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
+        if not ok_lo:
+
+            return False
+    return True
+
+def schedulability_test_MC(tasks: List[Task], drop_task=None) -> bool:
+    """
+    A schedulability test for MCS simulator with utility constraint based RTA.
+
+    :param drop_task:
+    :param tasks:a task set
+    :return ture or false
+    """
+    # assign_static_priorities(tasks)
+
+    if drop_task is None:
+        drop_task = []
+    for task in tasks:
+        R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
+        if not ok_lo:
+
+            return False
+
+        R_mc, ok_mc = calculate_wcrt_mc_terminate(task, tasks, drop_task, R_lo)
+
+        if not ok_mc:
+            return False
+
+    return True
 
 def test_aLO(task: Task, tasks: List[Task]) -> bool:
     """
@@ -88,21 +132,6 @@ def test_aLO(task: Task, tasks: List[Task]) -> bool:
         return False
 
     return True
-
-
-def test_aHI(task: Task, tasks: List[Task], drop_task=None) -> bool:
-    """
-    A schedulability test for a task in HI mode
-    """
-    if drop_task is None:
-        drop_task = []
-
-    R_hi, ok_hi = calculate_wcrt_hi(task, tasks, drop_task)
-    if not ok_hi:
-        return False
-
-    return True
-
 
 def test_aMC(task: Task, tasks: List[Task], R_lo: float, drop_task=None) -> bool:
     """
@@ -215,12 +244,14 @@ def calculate_wcrt_hi(cur_task: Task, tasks: List[Task], drop_tasks: List[Task],
         for task_q in hp_lo:
             m_q = task_q.mk.m
             k_q = task_q.mk.k
+            dx_q = task_q.mk.dx
+            effective_m_d = m_q + dx_q
             # d_q = math.ceil(R_prev / task_q.period) % k_q
             # if d_q == 0:
             #     num_lo_hi = math.ceil(R_prev / (k_q * task_q.period)) * m_q
             # else:
             #     num_lo_hi = math.ceil(R_prev / (k_q * task_q.period)) * m_q - max(m_q - d_q, 0)
-            num_lo_hi = calculate_mk_jobs(R_prev, task_q.period, m_q, k_q)
+            num_lo_hi = calculate_mk_jobs(R_prev, task_q.period, effective_m_d, k_q)
             interference_lo += num_lo_hi * task_q.wcet_lo
         R_hi = C_hi + interference_hi + interference_lo  # for LO task, Chi=Clo
         if R_hi > cur_task.deadline:
@@ -301,7 +332,9 @@ def calculate_wcrt_mc_terminate(cur_task: Task, tasks: List[Task], drop_tasks: L
             m_q = q.mk.m
             k_q = q.mk.k
             x_q = q.mk.x
+            dx_q = q.mk.dx
             effective_m_q = m_q + x_q
+            effective_m_q_d = m_q + dx_q
 
             count = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
             interference_lo_total += count * q.wcet_lo
@@ -309,8 +342,8 @@ def calculate_wcrt_mc_terminate(cur_task: Task, tasks: List[Task], drop_tasks: L
             if q not in drop_tasks:
                 # count_A = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
 
-                total_m = calculate_mk_jobs(R_prev, q.period, m_q, k_q)
-                pre_m = calculate_mk_jobs(R_lo, q.period, m_q, k_q)
+                total_m = calculate_mk_jobs(R_prev, q.period, effective_m_q_d, k_q)
+                pre_m = calculate_mk_jobs(R_lo, q.period, effective_m_q_d, k_q)
                 count_B = max(0, total_m - pre_m)
 
                 interference_lo_total += count_B * q.wcet_lo

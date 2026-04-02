@@ -83,12 +83,7 @@ class OnlineSimulator:
         # 如果是备份块，它始终是 (1, k)，没有 x 优化
         if task.is_backup_subblock:
             effective_m = task.mk.m
-        elif self.mode == 'HI':
-            # 原任务在 HI 模式：如果在 drop list，它根本不应该运行(admission 会拦截)
-            # 如果不在 drop list，说明它是幸存者，退回 m
-            effective_m = task.mk.m
         else:
-            # LO 模式：享受 x
             effective_m = task.mk.m + task.mk.x
 
         k = task.mk.k
@@ -110,15 +105,13 @@ class OnlineSimulator:
         k = task.mk.k
         idx = job_seq % k  # current job position in mk-pattern
 
-        #not considering optional jobs for subtasks.
-        if task.is_backup_subblock:
-            return task.mk.pattern[idx]
+        # not considering optional jobs for subtasks.
 
         # other LO tasks
         if self.mode == 'HI':
             # degraded mk, x=0
-            base_pattern = [1] * task.mk.m + [0] * (k - task.mk.m)
-            return base_pattern[idx]
+            # degraded (m+dx,k)
+            return task.mk.pattern_degrade[idx]
         else:
             # optimized (m+x,k)
             return task.mk.pattern[idx]
@@ -141,7 +134,6 @@ class OnlineSimulator:
         inter_queue = 0.0
         inter_curr = 0.0
 
-
         for task in self.tasks:
             # Safety Rule: Always assume HI tasks execute for WCET_HI to guarantee safety
             # in case of a sudden mode switch.
@@ -157,12 +149,15 @@ class OnlineSimulator:
 
             # 2. LO Mandatory Interference
             # 这里存在一个问题，无法确定何时发生模式转换，因此得删去，否则会导致一个optional job 被执行，但是miss deadline. 3/22
-            # elif task.criticality == "LO" and task.id != job.task_id:
-            #     # Filter based on current mode policies
-            #     if task.is_backup_subblock:
-            #         if self.mode == 'LO': continue  # Backups don't run in LO
-            #     elif self.mode == 'HI' and task.id in self.drop_list_ids:
-            #         continue  # Dropped tasks don't run in HI
+            #如果系统本身就在HI 模式，则是可以去除
+            elif task.criticality == "LO" and task.id != job.task_id:
+                # Filter based on current mode policies
+                # if task.is_backup_subblock:
+                #     if self.mode == 'LO': continue  # Backups don't run in LO
+                # elif self.mode == 'HI' and task.id in self.drop_list_ids:
+                #     continue  # Dropped tasks don't run in HI
+                if self.mode == 'HI' and task.id in self.drop_list_ids:
+                    continue
 
                 # Calculate future mandatory arrivals
                 start_k = math.ceil(self.current_time / task.period)
@@ -171,7 +166,7 @@ class OnlineSimulator:
                 while k * task.period < end_time:
                     if self._get_pattern_bit(task, k) == 1:
                         # Use correct WCET
-                        wcet = task.wcet_lo #   task.wcet_hi == task.wcet_lo
+                        wcet = task.wcet_lo  # task.wcet_hi == task.wcet_lo
                         inter_lo += wcet
                     k += 1
 
@@ -336,16 +331,16 @@ class OnlineSimulator:
                     self.job_seq_counters[task.id] += 1
 
                     if task.criticality == "LO":
-                        #if not getattr(task, 'is_backup_subblock', False):
-                        #self.stats["lo_released_count"] += 1 # 可能有歧义，但是目前不用这个参数，暂时也不做约束
+                        # if not getattr(task, 'is_backup_subblock', False):
+                        # self.stats["lo_released_count"] += 1 # 可能有歧义，但是目前不用这个参数，暂时也不做约束
                         if not task.is_backup_subblock:
                             self.stats["weighted_released"] += task.utility
-                        #self.stats["weighted_released"] += task.utility
+                        # self.stats["weighted_released"] += task.utility
 
                     # Determine WCET
                     if task.criticality == "HI" and self.mode == 'HI':
                         current_wcet = task.wcet_hi
-                    elif task.is_backup_subblock:   #没啥影响，对于LO任务， wcet_hi=wcet_lo
+                    elif task.is_backup_subblock:  # 没啥影响，对于LO任务， wcet_hi=wcet_lo
                         # Backup always uses HI-like budget (stored in wcet_hi)
                         current_wcet = task.wcet_hi
                     else:
@@ -392,7 +387,7 @@ class OnlineSimulator:
 
                     elif task.id in self.drop_list_ids:
                         # 【被 Drop 的原任务】
-                        # LO 模式: 接受 (运行 m+x)
+                        # LO 模式: 接受 (运行 m)
                         # HI 模式: 拒绝 (停止运行，交棒给 Backup)
                         if self.mode == 'LO':
                             # LO 模式下的 Optional 也要看 Slack
@@ -449,8 +444,8 @@ class OnlineSimulator:
         #         lo_released_count += self.job_seq_counters[t.id]
         # self.stats['lo_released_count'] = lo_released_count
         # Count LO Executed
-        #lo_executed_count = self.stats.get("lo_completed_count", 0)
-        #self.stats['utility'] = lo_executed_count / lo_released_count if lo_executed_count > 0 else 0.0
+        # lo_executed_count = self.stats.get("lo_completed_count", 0)
+        # self.stats['utility'] = lo_executed_count / lo_released_count if lo_executed_count > 0 else 0.0
 
         if self.stats["weighted_released"] > 0:
             self.stats['utility'] = self.stats["weighted_completed"] / self.stats["weighted_released"]
@@ -480,7 +475,7 @@ def run_multicore_simulation(processors: List[Processor],
     :param mode_switch_time: Time to trigger mode switch (global assumption for simplicity).
     :return: Aggregated statistics dictionary.
     """
-    #print(f"--- Running Multicore Simulation (Duration: {duration}, Switch: {mode_switch_time}) ---")
+    # print(f"--- Running Multicore Simulation (Duration: {duration}, Switch: {mode_switch_time}) ---")
 
     # Initialize global stats accumulator
     global_stats = {
@@ -518,5 +513,5 @@ def run_multicore_simulation(processors: List[Processor],
     else:
         global_stats["utility"] = 0.0
 
-    #print(f"--- Global Simulation Stats: Utility = {global_stats['utility']:.4f}, Misses = {global_stats['deadline_misses']} ---\n")
+    # print(f"--- Global Simulation Stats: Utility = {global_stats['utility']:.4f}, Misses = {global_stats['deadline_misses']} ---\n")
     return global_stats

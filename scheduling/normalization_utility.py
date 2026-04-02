@@ -31,8 +31,8 @@ def get_normalization_utility_offline_stats(
        - LO Mode: 原任务运行 (m+x), 备份子块不运行。
        - HI Mode:
             - 被 Drop 的原任务停止 (0)。
-            - 幸存的原任务运行 (m)。
-            - 备份子块运行 (m, 即1)。
+            - 幸存的原任务运行 (m+ degraded x)。
+            - 备份子块运行 (m, 即 1)。
     """
     if not tasks: return 0.0, 0.0
 
@@ -90,8 +90,8 @@ def get_normalization_utility_offline_stats(
                 effective_m = 0
 
             else:
-                # 原任务 (幸存者): HI 模式下退回基础 m
-                effective_m = task.mk.m
+                # 原任务 (幸存者): HI 模式下降级 m+dx
+                effective_m = task.mk.m+task.mk.dx
 
         # 计算在 effective_m 约束下的实际执行次数
         # (m,k) 模式计算公式
