@@ -33,8 +33,10 @@ class Processor:
             self.tasks.remove(task)
             self._update_util(task, sign=-1)
             # 如果在 drop list 中也要移除
-            if task in self.drop_list:
-                self.drop_list.remove(task)
+
+        if task in self.drop_list:
+            self.drop_list.remove(task)
+
 
     def mark_as_dropped(self, task: Task):
         """
