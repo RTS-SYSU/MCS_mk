@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 
 from scheduling.priority_assignment import assign_static_priorities
 from scheduling.sched_test import schedulability_test, schedulability_test_AMCrtbWH
-from scheduling.task_partitioning import partition_tasks_wfd
+from scheduling.task_partitioning import partition_tasks_wfd, partition_only
 from utils.generate_taskset import generate_taskset
 
 
@@ -25,8 +25,8 @@ def run_schedulability_experiment():
     }
 
     # 利用率范围: 0.5 到 0.9 (步长 0.05)
-    # range(10, 19) -> 10, 11, ..., 18 -> 0.50, 0.55, ..., 0.90
-    u_steps = range(10, 19)
+    # range(10, 19) -> 10, 11, ..., 18 -> 0.40, 0.55, ..., 0.90
+    u_steps = range(8, 19)
 
     # --- 结果容器 ---
     summary_data = []  # 汇总表: U, Our_Ratio, AMC_Ratio, Our_Yes_AMC_No, AMC_Yes_Our_No
@@ -61,7 +61,7 @@ def run_schedulability_experiment():
             for task in tasks:
                 task.mk.reset_x()
                 needed_x = task.mk.k - task.mk.m
-                task.mk.increase_x(needed_x) # 如果启用，就是测试全负荷
+                task.mk.increase_x(needed_x)  # 如果启用，就是测试全负荷
 
             # 3. 深度拷贝用于不同测试
             tasks_our = copy.deepcopy(tasks)
@@ -73,25 +73,43 @@ def run_schedulability_experiment():
 
             # A. Our Proposal (Drop-aware RTA or improved RTA)
             # schedulability_test 应该是您改进后的算法
-            result_our = partition_tasks_wfd(tasks_our, NUM_CORES, schedulability_test)
-            is_sched_our = (result_our is not None)
+            processor_our = partition_only(tasks_our, NUM_CORES)
+            processor_amc = copy.deepcopy(processor_our)
+            is_sched_our=False
+            is_sched_amc=False
 
-            # B. AMC-rtb-WH (Baseline)
-            result_amc = partition_tasks_wfd(tasks_amc, NUM_CORES, schedulability_test_AMCrtbWH)
-            is_sched_amc = (result_amc is not None)
+            if processor_our is not None:
+                is_sched_our = True
+                is_sched_amc = True
+
+                for p in processor_our:
+                    if not schedulability_test(p.tasks, []):
+                        is_sched_our=False
+                        break
+
+                for p in processor_amc:
+                    if not schedulability_test_AMCrtbWH(p.tasks):
+                        is_sched_amc=False
+                        break
+            # result_our = partition_tasks_wfd(tasks_our, NUM_CORES, schedulability_test)
+            # is_sched_our = (result_our is not None)
+            #
+            # # B. AMC-rtb-WH (Baseline)
+            # result_amc = partition_tasks_wfd(tasks_amc, NUM_CORES, schedulability_test_AMCrtbWH)
+            # is_sched_amc = (result_amc is not None)
 
             # 5. 统计
             if is_sched_our: cnt_our += 1
             if is_sched_amc: cnt_amc += 1
 
-            if is_sched_our and not is_sched_amc:
-                cnt_diff_our_better += 1
-                # 记录详细信息 (可选)
-                # diff_our_yes_amc_no.append({'Util': target_u, 'Seed': i, 'Tasks': str(tasks)})
-
-            if is_sched_amc and not is_sched_our:
-                cnt_diff_amc_better += 1
-                # diff_amc_yes_our_no.append({'Util': target_u, 'Seed': i, 'Tasks': str(tasks)})
+            # if is_sched_our and not is_sched_amc:
+            #     cnt_diff_our_better += 1
+            #     # 记录详细信息 (可选)
+            #     # diff_our_yes_amc_no.append({'Util': target_u, 'Seed': i, 'Tasks': str(tasks)})
+            #
+            # if is_sched_amc and not is_sched_our:
+            #     cnt_diff_amc_better += 1
+            #     # diff_amc_yes_our_no.append({'Util': target_u, 'Seed': i, 'Tasks': str(tasks)})
 
         # 计算比率
         ratio_our = cnt_our / TEST_TIMES

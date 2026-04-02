@@ -28,12 +28,19 @@ def _worker_run(args):
     except ValueError:
         return None
 
-    hp = calculate_hyperperiod(tasks)
+    hp = 10*calculate_hyperperiod(tasks)
     if hp == 0: return None
     _, base = get_normalization_utility_offline_stats(tasks, [], 'LO', hp)
     if base == 0: return None
-
     res = {}
+
+    lo_tasks = [t for t in tasks if t.criticality == "LO"]
+    if lo_tasks:
+        baseline_mk_avg = sum(t.mk.m / t.mk.k for t in lo_tasks) / len(lo_tasks)
+    else:
+        baseline_mk_avg = 0.0
+    res["Baseline"] = baseline_mk_avg
+
     for name, (func, dyn) in strategies.items():
         tasks_cp = copy.deepcopy(tasks)
         is_feas, procs = uaswc_offline_multicore(tasks_cp, num_cores, func, dyn)
@@ -76,7 +83,7 @@ def run_exp():
 
         params = {
             'targetU': 0.75, 'total_processor': BASE_CORES, 'total_task': 20 * BASE_CORES,
-            'cp': 0.5, 'cf': 2.0, 'xf': 1.0, 'max_hyperperiod': 1440,
+            'cp': 0.5, 'cf': 1.5, 'xf': 1.0, 'max_hyperperiod': 1440,
             'm': m_val, 'k': 10
         }
 
@@ -95,7 +102,7 @@ def run_exp():
         row = {"X_Value": r}
         row.update(avg)
         data.append(row)
-        print(f"Ratio: {r} | Valid: {len(valid)}")
+        print(f"Ratio: {r}|valid: {len(valid)}")
 
     pool.close()
 
@@ -124,7 +131,7 @@ def run_exp():
     ax1.legend()
     ax2.grid(True, linestyle='--', alpha=0.5)
     ax2.legend(ncol=2, fontsize=9)  # 双列图例
-    ax2.xaxis.set_major_locator(MultipleLocator(0.05))
+    ax2.xaxis.set_major_locator(MultipleLocator(0.1))
     ax2.yaxis.set_major_locator(MultipleLocator(0.05))
     ax2.set_title("HI Mode vs m/k Ratio")
     ax2.set_xlabel("m/k")

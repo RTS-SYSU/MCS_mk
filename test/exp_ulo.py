@@ -33,7 +33,7 @@ def _worker_unified_run(args: Dict[str, Any]) -> Optional[Dict[str, float]]:
         return None
 
     # 2. 确定全局统一时间基准
-    global_hyperperiod = calculate_hyperperiod(tasks)
+    global_hyperperiod = calculate_hyperperiod(tasks)  # k*hp, maxi
     if global_hyperperiod == 0: return None
 
     # 3. 计算统一分母 (Baseline Total Value)
@@ -46,6 +46,13 @@ def _worker_unified_run(args: Dict[str, Any]) -> Optional[Dict[str, float]]:
     result = {}
     all_strategies_feasible = True
 
+    #计算 Baseline = 所有 LO 任务 m/k 的平均值
+    lo_tasks = [t for t in tasks if t.criticality == "LO"]
+    if lo_tasks:
+        baseline_mk_avg = sum(t.mk.m / t.mk.k for t in lo_tasks) / len(lo_tasks)
+    else:
+        baseline_mk_avg = 0.0
+    result["Baseline"] = baseline_mk_avg
     # 4. 计算各优化策略
     for name, (cost_func, is_dyn) in strategies.items():
         tasks_strategy = copy.deepcopy(tasks)
@@ -131,6 +138,7 @@ def run_single_utilization_point_parallel(
 
     # 初始化聚合字典
     agg_results = {}
+    agg_results[f"Baseline"]=0.0
     for s in strategies:
         agg_results[f"{s}_LO_Off"] = 0.0
         agg_results[f"{s}_LO_On"] = 0.0
@@ -150,45 +158,65 @@ def run_single_utilization_point_parallel(
 
 
 # =========================================================================
-# 绘图与主函数 (保持原有风格)
+# 绘图与主函数
 # =========================================================================
-def plot_combined_results(df, strategies, filename):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
-    colors = ['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e', '#9467bd']
-    markers = ['o', 's', '^', 'D', 'v']
+def plot_mode_results(df, strategies, mode, filename):
+    plt.figure(figsize=(9, 6))
+
+    colors = ['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e']
+    markers = ['o', 's', '^', 'D']
 
     for i, name in enumerate(strategies):
         c = colors[i % len(colors)]
         m = markers[i % len(markers)]
 
-        # LO Mode
-        if f"{name}_LO_On" in df.columns:
-            ax1.plot(df["Utilization"], df[f"{name}_LO_On"], c=c, ls='-', marker=m, label=f"{name} (On)")
-            ax1.plot(df["Utilization"], df[f"{name}_LO_Off"], c=c, ls='--', marker=m, alpha=0.5,label=f"{name} (Off)")  # Off 不加label免得乱
+        on_col = f"{name}_{mode}_On"
+        off_col = f"{name}_{mode}_Off"
 
-        # HI Mode
-        if f"{name}_HI_On" in df.columns:
-            ax2.plot(df["Utilization"], df[f"{name}_HI_On"], c=c, ls='-', marker=m, label=f"{name} (On)")
-            ax2.plot(df["Utilization"], df[f"{name}_HI_Off"], c=c, ls='--', marker=m, alpha=0.5,label=f"{name} (Off)")
+        if on_col in df.columns:
+            plt.plot(df["Utilization"], df[on_col],
+                     color=c, marker=m, linestyle='-',
+                     label=f"{name} (Online)")
 
-    for ax, title in zip([ax1, ax2], ["LO Mode Performance", "HI Mode Performance"]):
-        ax.set_title(title, fontsize=14)
-        ax.set_xlabel("Utilization ($U_{avg^{LO}}$)")
-        ax.set_ylabel("Normalized Utility")
-        #ax.set_ylim(0, 1.05)
-        ax.grid(True, ls='--', alpha=0.5)
-        ax.legend(ncol=2, fontsize=9)
-        ax.xaxis.set_major_locator(MultipleLocator(0.05))
-        ax.yaxis.set_major_locator(MultipleLocator(0.05))
+        if off_col in df.columns:
+            plt.plot(df["Utilization"], df[off_col],
+                     color=c, marker=m, linestyle='--', alpha=0.6,
+                     label=f"{name} (Offline)")
+
+    plt.xlabel(r"$U_{avg}^{LO}$")
+    plt.ylabel("Normalized Utility")
+    plt.title(f"{mode} Mode Performance")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.legend(ncol=2, fontsize=10)
 
     plt.tight_layout()
-    plt.savefig(f"{filename}.png", dpi=300)
-    print(f"Plot saved to {filename}.png")
+    plt.savefig(f"{filename}.pdf")
+    plt.close()
+
+    print(f"{mode} plot saved to {filename}.pdf")
+
+def export_mode_tables(df, strategies, base_filename):
+    lo_cols = ["Utilization"]
+    hi_cols = ["Utilization"]
+
+    for s in strategies:
+        lo_cols += [f"{s}_LO_Off", f"{s}_LO_On"]
+        hi_cols += [f"{s}_HI_Off", f"{s}_HI_On"]
+
+    df_lo = df[lo_cols]
+    df_hi = df[hi_cols]
+
+    df_lo.to_excel(f"{base_filename}_LO_table.xlsx", index=False)
+    df_hi.to_excel(f"{base_filename}_HI_table.xlsx", index=False)
+
+    print("Tables exported:")
+    print(f" - {base_filename}_LO_table.xlsx")
+    print(f" - {base_filename}_HI_table.xlsx")
 
 
 def main():
     NUM_CORES = 4
-    TEST_TIMES = 5000  # 并行后可以跑大样本
+    TEST_TIMES = 10000  # 并行后可以跑大样本
 
     STRATEGIES = {
         "UASWC": (cost_utility_density, False),
@@ -199,12 +227,13 @@ def main():
 
     FIXED_PARAMS = {
         'total_task': 20 * NUM_CORES,
-        'cp': 0.5, 'cf': 2.0, 'xf': 1.0,
+        'cp': 0.5, 'cf': 1.5, 'xf': 1.0,
         'max_hyperperiod': 1440,
         'm': None, 'k': None
     }
 
-    u_values = [x * 0.05 for x in range(10, 19)]
+    #u_values = [x * 0.05 for x in range(10, 19)]
+    u_values = [x * 0.05 for x in range(8, 11)]
     final_data = []
 
     print(f"Starting Parallel Experiment | Cores: {NUM_CORES} | Samples: {TEST_TIMES}")
@@ -231,11 +260,17 @@ def main():
         print(f"{u:<6.2f} {count:<6} | {lo_str:<11} | {hi_str:<11}")
 
     df = pd.DataFrame(final_data)
-    filename = f"result_parallel_{NUM_CORES}core"
-    df.to_excel(f"{filename}.xlsx", index=False)
-    print(f"\nData saved to {filename}.xlsx")
+    filename = f"result_Ulo_{NUM_CORES}core"
 
-    plot_combined_results(df, STRATEGIES, filename)
+    # 总表（可选）
+    df.to_excel(f"{filename}_full.xlsx", index=False)
+
+    # 导出 LO / HI 表
+    export_mode_tables(df, STRATEGIES, filename)
+
+    # 绘制 LO / HI 图（PDF）
+    plot_mode_results(df, STRATEGIES, mode="LO", filename=f"{filename}_LO")
+    plot_mode_results(df, STRATEGIES, mode="HI", filename=f"{filename}_HI")
 
 
 if __name__ == "__main__":
