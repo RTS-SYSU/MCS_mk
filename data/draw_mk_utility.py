@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MultipleLocator
 
 # 1. 读取 Excel 数据 (修改为了 read_excel)
 # 确保你已经安装了 openpyxl： pip install openpyxl
@@ -61,7 +62,8 @@ def plot_mode(mode_str):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 根据数据范围设置y轴，留出放图例的空间
-    ax.set_ylim(0, 1.01)
+    ax.set_ylim(0.08, 1.01)
+    ax.yaxis.set_major_locator(MultipleLocator(0.1))
 
     # 添加图例
     # handles, _ = ax.get_legend_handles_labels()

@@ -402,3 +402,71 @@ def partition_only(original_tasks: List[Task], num_processors: int) -> Optional[
         assign_static_priorities(p.tasks)
 
     return processors
+
+def partition_only_other(original_tasks: List[Task], num_processors: int) -> Optional[List[Processor]]:
+    """
+    【Step 1】一次性分配 HI 和 LO 任务到处理器。
+    如果在分配过程中，任务无法放入任何核心（导致 U_LO > 1.0 或 U_HI > 1.0），则返回 None。
+    """
+    processors = [Processor(i) for i in range(num_processors)]
+
+    hi_tasks = [t for t in original_tasks if t.criticality == "HI"]
+    lo_tasks = [t for t in original_tasks if t.criticality == "LO"]
+
+    # --- 1. HI 任务分配 ---
+    # 策略：按 HI 利用率降序
+    hi_tasks.sort(key=lambda t: t.wcet_hi / t.period, reverse=True)
+
+    for task in hi_tasks:
+        # WFD: 尝试放入 HI 负载最小的核心
+        processors.sort(key=lambda p: p.utilization_hi)
+
+        assigned = False
+
+        # 预先计算该 HI 任务带来的利用率增量
+        u_inc_lo = task.wcet_lo / task.period
+        u_inc_hi = task.wcet_hi / task.period
+
+        for p in processors:
+            # 检查加入后是否超限
+            if (p.utilization_lo + u_inc_lo <= 1.0) and (p.utilization_hi + u_inc_hi <= 1.0):
+                p.add_task(task)
+                assigned = True
+                break
+
+        if not assigned:
+            #print(f"[Partition Fail] HI Task {task.id} fits nowhere. (U>1)")
+            return None
+
+    # --- 2. LO 任务分配 ---
+    # 策略：按有效利用率 ((m/k)*C_LO/T) 降序
+    lo_tasks.sort(key=lambda t:  t.wcet_lo / t.period, reverse=True)
+
+    for task in lo_tasks:
+
+        processors.sort(key=lambda p: p.utilization_lo)
+
+        assigned = False
+
+        # 预先计算该 LO 任务带来的利用率增量
+        # LO 任务在 HI 模式下的贡献按照 (m/k)*C_LO 计算
+        ratio = task.mk.m / task.mk.k
+        u_inc_lo = (task.wcet_lo / task.period) * ratio
+        u_inc_hi = (task.wcet_lo / task.period) * ratio
+
+        for p in processors:
+            # 检查加入后是否超限
+            if (p.utilization_lo + u_inc_lo <= 1.0) and (p.utilization_hi + u_inc_hi <= 1.0):
+                p.add_task(task)
+                assigned = True
+                break
+
+        if not assigned:
+            #print(f"[Partition Fail] LO Task {task.id} fits nowhere. (U>1)")
+            return None
+
+    # 预分配优先级
+    for p in processors:
+        assign_static_priorities(p.tasks)
+
+    return processors

@@ -160,7 +160,7 @@ def uaswc_offline_multicore(
                 break
 
             if is_dynamic_strategy:
-                degradable.sort(key=cost_func,reverse=True)  # 这里的动态策略主要指fair-min-max
+                degradable.sort(key=lambda t: (t.mk.m + t.mk.dx) / t.mk.k, reverse=True)
             target = degradable[0]
             dx = target.mk.dx
             if dx > 0:

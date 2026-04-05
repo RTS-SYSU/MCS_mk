@@ -515,6 +515,7 @@ def calculate_wcrt_mc_AMCrtbWH(cur_task: Task, tasks: List[Task], R_lo: float, m
                 x = math.ceil(R_lo / T_q) * T_q
                 subtract_num = 0
                 for n in range(s_q, k_q + 1):
+                #for n in range(1, s_q + 1):
                     subtract_num += max(math.ceil((R_prev - (k_q - n) * T_q - x) / (T_q * k_q)), 0)
 
                 interference_lo += (num_lo_hi - subtract_num) * task_q.wcet_lo
