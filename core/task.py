@@ -27,7 +27,7 @@ class Task:
 
         if criticality == "LO":
             self.mk: MKPattern = MKPattern(m, k, offset=0)
-            self.mk
+            #self.mk
         else:
             self.mk: MKPattern = MKPattern(k, k)  # HI tasks: always mandatory
 

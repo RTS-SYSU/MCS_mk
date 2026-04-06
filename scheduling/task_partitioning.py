@@ -246,6 +246,7 @@ def partition_reassign_subtasks(
             sb.wcet_hi = current_task.wcet_hi
 
             sb.mk = MKPattern(m=1, k=k_orig, offset=j)
+            #print(sb.mk.pattern_degrade)
             current_task_subblocks.append(sb)
 
         # 尝试分配所有子块
@@ -465,7 +466,7 @@ def partition_only_other(original_tasks: List[Task], num_processors: int) -> Opt
             #print(f"[Partition Fail] LO Task {task.id} fits nowhere. (U>1)")
             return None
 
-    # 预分配优先级
+
     for p in processors:
         assign_static_priorities(p.tasks)
 

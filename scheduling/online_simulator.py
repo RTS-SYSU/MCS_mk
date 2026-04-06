@@ -109,12 +109,16 @@ class OnlineSimulator:
 
         # other LO tasks
         if self.mode == 'HI':
-            # degraded mk, x=0
-            # degraded (m+dx,k)
-            return task.mk.pattern_degrade[idx]
+            if task not in self.drop_list_ids:
+                return task.mk.pattern_degrade[idx]
+            else:
+                return 0
         else:
             # optimized (m+x,k)
-            return task.mk.pattern[idx]
+            if task.is_backup_subblock:
+                return 0
+            else:
+                return task.mk.pattern[idx]
 
     def _calculate_interference_and_slack(self, job: Job) -> float:
         """
@@ -149,7 +153,7 @@ class OnlineSimulator:
 
             # 2. LO Mandatory Interference
             # 这里存在一个问题，无法确定何时发生模式转换，因此得删去，否则会导致一个optional job 被执行，但是miss deadline. 3/22
-            #如果系统本身就在HI 模式，则是可以去除
+            # 如果系统本身就在HI 模式，则是可以去除
             elif task.criticality == "LO" and task.id != job.task_id:
                 # Filter based on current mode policies
                 # if task.is_backup_subblock:
@@ -298,7 +302,7 @@ class OnlineSimulator:
                         #     f"    !!! Deadline Miss !!! Job T{self.current_job.task_id}-{self.current_job.job_id}")
                         miss_type = "OPT" if self.current_job.is_optional else "MAND"
                         self.logger.error(
-                            f"!!! DEADLINE MISS !!! Job T{self.current_job.task_id}-{self.current_job.job_id} ({miss_type})\n"
+                            f"!!! DEADLINE MISS !!! Job T{self.current_job.task_id}-{self.current_job.job_id} ({miss_type}-{self.current_job.criticality})\n"
                             f"    Finish: {self.current_job.finish_time} > Deadline: {self.current_job.absolute_deadline}\n"
                             f"    Current Mode: {self.mode}\n"
                             f"    WCET: {self.current_job.initial_wcet}, ACET: {self.current_job.remaining_time + time_step}"
@@ -341,8 +345,7 @@ class OnlineSimulator:
                     if task.criticality == "HI" and self.mode == 'HI':
                         current_wcet = task.wcet_hi
                     elif task.is_backup_subblock:  # 没啥影响，对于LO任务， wcet_hi=wcet_lo
-                        # Backup always uses HI-like budget (stored in wcet_hi)
-                        current_wcet = task.wcet_hi
+                        current_wcet = task.wcet_lo
                     else:
                         current_wcet = task.wcet_lo
                     # Set acet
