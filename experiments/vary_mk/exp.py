@@ -1,10 +1,10 @@
 r"""
-CF-variation experiment (C_HI / C_LO ratio for HI tasks).
+(m,k)-constraint variation experiment.
 
-Varies CF from 1.0 to 3.0 (step 0.4).  Higher CF means HI tasks exert
-more mode-switch pressure.
+Varies m from 1 to 9 with k=10 fixed.  Higher m/k means more mandatory
+jobs (higher baseline importance, higher LO utilisation).
 
-For each CF, generates N random task sets; only successfully partitioned
+For each m, generates N random task sets; only successfully partitioned
 + classified sets are counted.
 
 Compares four methods on Perf^H (normalized stable-HI performance):
@@ -49,19 +49,22 @@ NUM_PROCESSORS = 4
 TASKS_PER_CORE = 20
 TOTAL_TASKS = NUM_PROCESSORS * TASKS_PER_CORE  # 80
 CP = 0.5        # fraction of HI tasks
+CF = 2.0        # C_HI / C_LO for HI tasks
 XF = 1.0        # C_HI / C_LO for LO tasks
 BETA = 0.5
-TARGET_U = 0.65  # fixed utilisation
+TARGET_U = 0.65
 
-CF_START = 1.0
-CF_END = 3.0
-CF_STEP = 0.4
+K_FIXED = 10
+M_START = 1
+M_END = 9
+M_STEP = 1
+
 N_RUNS = 10000
 NUM_THREADS = 10
 
-OUTPUT_DIR = "data"
-OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vary_cf.csv")
-OUTPUT_PLOT = os.path.join(OUTPUT_DIR, "vary_cf.png")
+OUTPUT_DIR = "experiments/vary_mk/data"
+OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vary_mk.csv")
+OUTPUT_PLOT = os.path.join(OUTPUT_DIR, "vary_mk.png")
 
 
 # ---------------------------------------------------------------------------
@@ -84,27 +87,29 @@ def _deepcopy_procs(processors: List[Processor]) -> List[Processor]:
 
 
 # ---------------------------------------------------------------------------
-# Single CF point
+# Single m point
 # ---------------------------------------------------------------------------
 
-def run_cf_point(cf: float,
-                 n_runs: int,
-                 beta: float,
-                 base_seed: int = 0) -> Dict[str, float]:
+def run_m_point(m: int,
+                n_runs: int,
+                beta: float,
+                base_seed: int = 0) -> Dict[str, float]:
     methods = ["Static", "AugOnly", "MaxCount", "Proposed"]
-    accum: Dict[str, float] = {m: 0.0 for m in methods}
+    accum: Dict[str, float] = {mtd: 0.0 for mtd in methods}
     success = 0
 
     for run_idx in range(n_runs):
-        random.seed(base_seed + int(cf * 10000) + run_idx)
+        random.seed(base_seed + m * 10000 + run_idx)
 
         tasks = generate_taskset(
             total_processor=NUM_PROCESSORS,
             total_task=TOTAL_TASKS,
             targetU=TARGET_U,
             cp=CP,
-            cf=cf,
+            cf=CF,
             xf=XF,
+            m=m,
+            k=K_FIXED,
         )
         lo_all = [t for t in tasks if t.criticality == "LO"]
 
@@ -145,8 +150,8 @@ def run_cf_point(cf: float,
         success += 1
 
     if success == 0:
-        return {m: float('nan') for m in methods}
-    return {m: accum[m] / success for m in methods}
+        return {mtd: float('nan') for mtd in methods}
+    return {mtd: accum[mtd] / success for mtd in methods}
 
 
 # ---------------------------------------------------------------------------
@@ -156,34 +161,30 @@ def run_cf_point(cf: float,
 def main():
     set_beta(BETA)
 
-    cf_values = []
-    cf = CF_START
-    while cf <= CF_END + 1e-9:
-        cf_values.append(cf)
-        cf = round(cf + CF_STEP, 10)
+    m_values = list(range(M_START, M_END + 1, M_STEP))
 
     results: Dict[str, List[float]] = {
-        "Static": [0.0] * len(cf_values),
-        "AugOnly": [0.0] * len(cf_values),
-        "MaxCount": [0.0] * len(cf_values),
-        "Proposed": [0.0] * len(cf_values),
+        "Static": [0.0] * len(m_values),
+        "AugOnly": [0.0] * len(m_values),
+        "MaxCount": [0.0] * len(m_values),
+        "Proposed": [0.0] * len(m_values),
     }
 
     t0 = time.time()
 
     with ProcessPoolExecutor(max_workers=NUM_THREADS) as executor:
         future_to_idx = {}
-        for i, cf_val in enumerate(cf_values):
-            fut = executor.submit(run_cf_point, cf_val, N_RUNS, BETA, base_seed=1)
-            future_to_idx[fut] = (i, cf_val)
+        for i, m_val in enumerate(m_values):
+            fut = executor.submit(run_m_point, m_val, N_RUNS, BETA, base_seed=2)
+            future_to_idx[fut] = (i, m_val)
 
         for fut in as_completed(future_to_idx):
-            i, cf_val = future_to_idx[fut]
+            i, m_val = future_to_idx[fut]
             perfs = fut.result()
-            for m in results:
-                results[m][i] = perfs[m]
+            for mtd in results:
+                results[mtd][i] = perfs[mtd]
             elapsed = time.time() - t0
-            print(f"[{elapsed:6.1f}s]  CF={cf_val:.1f}  "
+            print(f"[{elapsed:6.1f}s]  m={m_val} (k={K_FIXED})  "
                   f"Static={perfs['Static']:.4f}  "
                   f"AugOnly={perfs['AugOnly']:.4f}  "
                   f"MaxCount={perfs['MaxCount']:.4f}  "
@@ -195,19 +196,19 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["CF"] + list(results.keys()))
-        for i, cf_val in enumerate(cf_values):
-            row = [f"{cf_val:.1f}"]
-            for m in results:
-                row.append(f"{results[m][i]:.6f}")
+        writer.writerow(["m"] + list(results.keys()))
+        for i, m_val in enumerate(m_values):
+            row = [str(m_val)]
+            for mtd in results:
+                row.append(f"{results[mtd][i]:.6f}")
             writer.writerow(row)
     print(f"Saved: {OUTPUT_CSV}")
 
-    _plot(cf_values, results, OUTPUT_PLOT)
+    _plot(m_values, results, OUTPUT_PLOT)
     print(f"Saved: {OUTPUT_PLOT}")
 
 
-def _plot(cf_values, results, path):
+def _plot(m_values, results, path):
     import matplotlib.pyplot as plt
 
     plt.figure(figsize=(9, 5.5))
@@ -216,12 +217,12 @@ def _plot(cf_values, results, path):
               "Proposed": "#E91E63"}
 
     for method, perfs in results.items():
-        plt.plot(cf_values, perfs,
+        plt.plot(m_values, perfs,
                  marker=markers.get(method, "x"),
                  color=colors.get(method, "black"),
                  linewidth=1.5, markersize=5, label=method)
 
-    plt.xlabel("CF  $(C^{\\mathrm{HI}} / C^{\\mathrm{LO}}$ for HI tasks)")
+    plt.xlabel("m  (k = 10)")
     plt.ylabel("Normalised performance $\\mathrm{Perf}^{\\mathrm{H}}$")
     plt.ylim(-0.02, 1.05)
     plt.grid(True, alpha=0.3)
@@ -240,5 +241,5 @@ if __name__ == "__main__":
     if "--test" in sys.argv:
         print("=== Quick test mode (1 run per point) ===")
         N_RUNS = 1
-    print(f"=== (cf: {N_RUNS} runs per point) ===")
+    print(f"=== (mk: {N_RUNS} runs per point) ===")
     main()

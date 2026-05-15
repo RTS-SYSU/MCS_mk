@@ -48,10 +48,11 @@ def core_importance(
     Mode switch ('S') and HI mode ('H'): tasks in drop_list are inactive (a_i = 0).
     """
     total = 0.0
+    drop_ids = {t.id for t in drop_list}
     for t in tasks:
         if t.criticality == "HI":
             continue
-        if mode != 'L' and t in drop_list:
+        if mode != 'L' and t.id in drop_ids:
             continue
         total += t.calculate_importance(beta, mode)
     return total

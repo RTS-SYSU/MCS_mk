@@ -1,11 +1,9 @@
 r"""
-(m,k)-constraint variation experiment.
+Utilization-variation experiment.
 
-Varies m from 1 to 9 with k=10 fixed.  Higher m/k means more mandatory
-jobs (higher baseline importance, higher LO utilisation).
-
-For each m, generates N random task sets; only successfully partitioned
-+ classified sets are counted.
+Varies target utilization from 0.40 to 0.90 (step 0.05).
+For each utilization, generates N random task sets; only successfully
+partitioned + classified sets are counted.
 
 Compares four methods on Perf^H (normalized stable-HI performance):
   - Static-(m,k)
@@ -52,19 +50,16 @@ CP = 0.5        # fraction of HI tasks
 CF = 2.0        # C_HI / C_LO for HI tasks
 XF = 1.0        # C_HI / C_LO for LO tasks
 BETA = 0.5
-TARGET_U = 0.65
 
-K_FIXED = 10
-M_START = 1
-M_END = 9
-M_STEP = 1
+UTIL_START = 0.40
+UTIL_END = 0.90
+UTIL_STEP = 0.05
+N_RUNS = 10000       # random task sets per utilisation point
+NUM_THREADS = 10     # process pool size
 
-N_RUNS = 10000
-NUM_THREADS = 10
-
-OUTPUT_DIR = "data"
-OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vary_mk.csv")
-OUTPUT_PLOT = os.path.join(OUTPUT_DIR, "vary_mk.png")
+OUTPUT_DIR = "experiments/vary_utilization/data"
+OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vary_utilization.csv")
+OUTPUT_PLOT = os.path.join(OUTPUT_DIR, "vary_utilization.png")
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +69,7 @@ OUTPUT_PLOT = os.path.join(OUTPUT_DIR, "vary_mk.png")
 def _perf_h(processors: List[Processor],
             all_lo_tasks: List[Task],
             beta: float) -> float:
+    """Compute Perf^H for a set of processors."""
     i_max = global_max_importance(all_lo_tasks, beta)
     if i_max == 0:
         return 0.0
@@ -87,42 +83,52 @@ def _deepcopy_procs(processors: List[Processor]) -> List[Processor]:
 
 
 # ---------------------------------------------------------------------------
-# Single m point
+# Single utilisation point (thread-safe, uses local random seed)
 # ---------------------------------------------------------------------------
 
-def run_m_point(m: int,
-                n_runs: int,
-                beta: float,
-                base_seed: int = 0) -> Dict[str, float]:
+def run_util_point(target_util: float,
+                   n_runs: int,
+                   beta: float,
+                   base_seed: int = 0) -> Dict[str, float]:
+    """
+    Run N_RUNS random task sets at a given target utilisation.
+
+    Returns dict {method_name: avg_Perf_H} across successful task sets.
+    """
+    rng = random.Random(base_seed + int(target_util * 10000))
+
     methods = ["Static", "AugOnly", "MaxCount", "Proposed"]
-    accum: Dict[str, float] = {mtd: 0.0 for mtd in methods}
+    accum: Dict[str, float] = {m: 0.0 for m in methods}
     success = 0
 
     for run_idx in range(n_runs):
-        random.seed(base_seed + m * 10000 + run_idx)
+        # Local seed for this run (ensures reproducibility across threads)
+        rng.seed(base_seed + int(target_util * 10000) + run_idx)
 
+        # 1. Generate
         tasks = generate_taskset(
             total_processor=NUM_PROCESSORS,
             total_task=TOTAL_TASKS,
-            targetU=TARGET_U,
+            targetU=target_util,
             cp=CP,
             cf=CF,
             xf=XF,
-            m=m,
-            k=K_FIXED,
         )
         lo_all = [t for t in tasks if t.criticality == "LO"]
 
+        # 2. Partition
         processors = partition_tasks(tasks, NUM_PROCESSORS)
         if processors is None:
             continue
 
+        # 3. Shared base: LO augment + MC degrade
         base = _deepcopy_procs(processors)
         for p in base:
             lo_mode_augment(p.tasks, drop_list=p.drop_list, beta=beta)
         for p in base:
             mode_switch_degrade(p.tasks, drop_list=p.drop_list, beta=beta)
 
+        # 4a. Static: from partitioned state, x = 0
         p_static = _deepcopy_procs(processors)
         for p in p_static:
             for t in p.tasks:
@@ -132,16 +138,19 @@ def run_m_point(m: int,
                     t.mk.set_x(0, 'H')
         accum["Static"] += _perf_h(p_static, lo_all, beta)
 
+        # 4b. AugOnly: from post-MC, post-augment only, no recovery
         p_aug = _deepcopy_procs(base)
         for p in p_aug:
             _hi_mode_augment(p.tasks, p.drop_list, beta)
         accum["AugOnly"] += _perf_h(p_aug, lo_all, beta)
 
+        # 4c. MaxCount: from post-MC, maxcount recovery, no post-augment
         p_mc = _deepcopy_procs(base)
         for p in p_mc:
             _maxcount_recover_core(p.tasks, p.drop_list, beta)
         accum["MaxCount"] += _perf_h(p_mc, lo_all, beta)
 
+        # 4d. Proposed: from post-MC, full recovery + post-augment
         p_prop = _deepcopy_procs(base)
         for p in p_prop:
             stable_hi_recovery(p.tasks, p.drop_list, beta=beta)
@@ -150,8 +159,9 @@ def run_m_point(m: int,
         success += 1
 
     if success == 0:
-        return {mtd: float('nan') for mtd in methods}
-    return {mtd: accum[mtd] / success for mtd in methods}
+        return {m: float('nan') for m in methods}
+
+    return {m: accum[m] / success for m in methods}
 
 
 # ---------------------------------------------------------------------------
@@ -161,30 +171,36 @@ def run_m_point(m: int,
 def main():
     set_beta(BETA)
 
-    m_values = list(range(M_START, M_END + 1, M_STEP))
+    util_values = []
+    u = UTIL_START
+    while u <= UTIL_END + 1e-9:
+        util_values.append(u)
+        u = round(u + UTIL_STEP, 10)
 
     results: Dict[str, List[float]] = {
-        "Static": [0.0] * len(m_values),
-        "AugOnly": [0.0] * len(m_values),
-        "MaxCount": [0.0] * len(m_values),
-        "Proposed": [0.0] * len(m_values),
+        "Static": [0.0] * len(util_values),
+        "AugOnly": [0.0] * len(util_values),
+        "MaxCount": [0.0] * len(util_values),
+        "Proposed": [0.0] * len(util_values),
     }
 
     t0 = time.time()
 
     with ProcessPoolExecutor(max_workers=NUM_THREADS) as executor:
+        # Submit all jobs, keyed by index
         future_to_idx = {}
-        for i, m_val in enumerate(m_values):
-            fut = executor.submit(run_m_point, m_val, N_RUNS, BETA, base_seed=2)
-            future_to_idx[fut] = (i, m_val)
+        for i, u_val in enumerate(util_values):
+            fut = executor.submit(run_util_point, u_val, N_RUNS, BETA, base_seed=0)
+            future_to_idx[fut] = (i, u_val)
 
+        # Collect as they complete
         for fut in as_completed(future_to_idx):
-            i, m_val = future_to_idx[fut]
+            i, u_val = future_to_idx[fut]
             perfs = fut.result()
-            for mtd in results:
-                results[mtd][i] = perfs[mtd]
+            for m in results:
+                results[m][i] = perfs[m]
             elapsed = time.time() - t0
-            print(f"[{elapsed:6.1f}s]  m={m_val} (k={K_FIXED})  "
+            print(f"[{elapsed:6.1f}s]  U={u_val:.2f}  "
                   f"Static={perfs['Static']:.4f}  "
                   f"AugOnly={perfs['AugOnly']:.4f}  "
                   f"MaxCount={perfs['MaxCount']:.4f}  "
@@ -193,22 +209,24 @@ def main():
     elapsed = time.time() - t0
     print(f"\nTotal time: {elapsed:.1f}s")
 
+    # ---- Save CSV ----
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["m"] + list(results.keys()))
-        for i, m_val in enumerate(m_values):
-            row = [str(m_val)]
-            for mtd in results:
-                row.append(f"{results[mtd][i]:.6f}")
+        writer.writerow(["Utilization"] + list(results.keys()))
+        for i, u_val in enumerate(util_values):
+            row = [f"{u_val:.2f}"]
+            for m in results:
+                row.append(f"{results[m][i]:.6f}")
             writer.writerow(row)
     print(f"Saved: {OUTPUT_CSV}")
 
-    _plot(m_values, results, OUTPUT_PLOT)
+    # ---- Plot ----
+    _plot(util_values, results, OUTPUT_PLOT)
     print(f"Saved: {OUTPUT_PLOT}")
 
 
-def _plot(m_values, results, path):
+def _plot(util_values, results, path):
     import matplotlib.pyplot as plt
 
     plt.figure(figsize=(9, 5.5))
@@ -217,12 +235,12 @@ def _plot(m_values, results, path):
               "Proposed": "#E91E63"}
 
     for method, perfs in results.items():
-        plt.plot(m_values, perfs,
+        plt.plot(util_values, perfs,
                  marker=markers.get(method, "x"),
                  color=colors.get(method, "black"),
                  linewidth=1.5, markersize=5, label=method)
 
-    plt.xlabel("m  (k = 10)")
+    plt.xlabel("Target utilisation $U$")
     plt.ylabel("Normalised performance $\\mathrm{Perf}^{\\mathrm{H}}$")
     plt.ylim(-0.02, 1.05)
     plt.grid(True, alpha=0.3)
@@ -241,5 +259,5 @@ if __name__ == "__main__":
     if "--test" in sys.argv:
         print("=== Quick test mode (1 run per point) ===")
         N_RUNS = 1
-    print(f"=== (mk: {N_RUNS} runs per point) ===")
+    print(f"=== (utilization: {N_RUNS} runs per point) ===")
     main()
