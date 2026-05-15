@@ -135,18 +135,11 @@ def generate_taskset(total_processor: int = 1.0,
         this_m = m if m is not None else random.randint(1, this_k - 1)
         idx = n_hi + i
 
-        utility = random.random()*9+1
-        #utility = random.choice([1, 100])
-        #utility = random.uniform(1, 100)
-        # u_val = lo_utils[i][0]
-        # if u_val < 0.02:
-        #     utility = 100
-        # else:
-        #     utility = 1
+        baseline_importance = random.random() * 9 + 1
         tasks.append(Task(id=idx + 1, criticality="LO",
                           period=periods[idx], deadline=periods[idx],
                           wcet_lo=lo_utils[i][0] * periods[idx], wcet_hi=lo_utils[i][1] * periods[idx], m=this_m,
-                          k=this_k,utility=utility))
+                          k=this_k, baseline_importance=baseline_importance))
 
     return tasks
 

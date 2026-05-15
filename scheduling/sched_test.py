@@ -1,164 +1,48 @@
+r"""
+Response-Time Analysis for Mixed-Criticality Systems with Weakly-Hard Constraints.
+
+Three WCRT analyses:
+  - R_i^{LO}:  LO-mode WCRT
+  - R_i^*:     Mode-switch WCRT
+  - R_i^{HI}:  Stable HI-mode WCRT
+
+The mandatory-job upper bound eta(t, T, m, k) counts mandatory jobs in [0,t).
+"""
+
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple
+
 from core.task import Task
-from scheduling.priority_assignment import assign_static_priorities
 
 
-def schedulability_test(tasks: List[Task], drop_task=None) -> bool:
+# ---------------------------------------------------------------------------
+# η(t, T, m, k) — mandatory jobs in an interval of length t
+# ---------------------------------------------------------------------------
+
+def calculate_mk_jobs(t: float, T: float, m: int, k: int) -> int:
     """
-    A schedulability test for MCS simulator with utility constraint based RTA.
+    Maximum number of mandatory jobs of a weakly-hard task in interval [0, t).
 
-    :param drop_task:
-    :param tasks:a task set
-    :return ture or false
+    η(t, T, m, k) = floor(ceil(t/T) / k) * m + min(ceil(t/T) mod k, m)
     """
-    # assign_static_priorities(tasks)
-
-    if drop_task is None:
-        drop_task = []
-    for task in tasks:
-        # Calculate LO mode WCRT
-        R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
-        if not ok_lo:
-            # print(R_lo, ok_lo)
-            # print("cur", task)
-            # for t in tasks:
-            #     print(t)
-            # breakpoint()
-            # print(f"Task {task.id}: LO mode WCRT exceeded deadline or did not converge")
-
-            return False
-        # Calculate HI mode WCRT
-        R_hi, ok_hi = calculate_wcrt_hi(task, tasks, drop_task)
-        if not ok_hi:
-            # print(f"Task {task.id}: HI mode WCRT exceeded deadline or did not converge")
-            return False
-
-        # Calculate mode change WCRT
-        # calculate_wcrt_mc_terminate includes alculate_wcrt_mc if hpDL(i)==null
-        R_mc, ok_mc = calculate_wcrt_mc_terminate(task, tasks, drop_task, R_lo)
-        # R_mc, ok_mc = calculate_wcrt_mc(task, tasks, R_lo)
-        if not ok_mc:
-            # print(f"Task {task.id}: Mode change WCRT exceeded deadline")
-            return False
-
-    # All tasks passed the test
-    return True
+    if t <= 0:
+        return 0
+    N = math.ceil(t / T)
+    cycles = N // k
+    remainder = N % k
+    return cycles * m + min(remainder, m)
 
 
-def schedulability_test_AMCrtbWH(tasks: List[Task]) -> bool:
+# ---------------------------------------------------------------------------
+# R_i^{LO} — LO-mode WCRT
+# ---------------------------------------------------------------------------
+
+def calculate_wcrt_lo(cur_task: Task, tasks: List[Task],
+                      max_iter: int = 1000, tol: float = 1e-6) -> Tuple[float, bool]:
     """
-    A schedulability test for MCS simulator with utility constraint based RTA.
-    cite:"Gettings O, Quinton S, Davis R I. Mixed criticality systems with weakly-hard constraints[C]
-    //Proceedings of the 23rd International Conference on Real Time and Networks Systems. 2015: 237-246."
-
-    :param tasks:a task set
-    :return ture or false
-    """
-    for task in tasks:
-        # Calculate LO-mode WCRT
-        R_lo, ok_lo = calculate_wcrt_lo_AMCrtbWH(task, tasks)
-        if not ok_lo:
-            # print(f"Task {task.id}: LO-mode WCRT exceeded deadline or did not converge")
-
-            return False
-
-        # Calculate HI mode WCRT
-        R_hi, ok_hi = calculate_wcrt_hi_AMCrtbWH(task, tasks)
-        if not ok_hi:
-            # print(f"Task {task.id}: HI mode WCRT exceeded deadline or did not converge")
-            return False
-
-        # Calculate mode change WCRT
-        R_mc, ok_mc = calculate_wcrt_mc_AMCrtbWH(task, tasks, R_lo)
-        if not ok_mc:
-            # print(f"Task {task.id}: Mode change WCRT exceeded deadline")
-            return False
-
-    # All tasks passed the test
-    return True
-
-def schedulability_test_LO(tasks: List[Task], drop_task=None) -> bool:
-    """
-    A schedulability test for MCS simulator with utility constraint based RTA.
-
-    :param drop_task:
-    :param tasks:a task set
-    :return ture or false
-    """
-    # assign_static_priorities(tasks)
-
-    if drop_task is None:
-        drop_task = []
-    for task in tasks:
-        # Calculate LO mode WCRT
-        R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
-        if not ok_lo:
-
-            return False
-    return True
-
-def schedulability_test_MC(tasks: List[Task], drop_task=None) -> bool:
-    """
-    A schedulability test for MCS simulator with utility constraint based RTA.
-
-    :param drop_task:
-    :param tasks:a task set
-    :return ture or false
-    """
-    # assign_static_priorities(tasks)
-
-    if drop_task is None:
-        drop_task = []
-    for task in tasks:
-        R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
-        if not ok_lo:
-
-            return False
-
-        R_mc, ok_mc = calculate_wcrt_mc_terminate(task, tasks, drop_task, R_lo)
-
-        if not ok_mc:
-            return False
-
-    return True
-
-def test_aLO(task: Task, tasks: List[Task]) -> bool:
-    """
-    A schedulability test for a task in LO mode
-    """
-    R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
-    if not ok_lo:
-        return False
-
-    return True
-
-def test_aMC(task: Task, tasks: List[Task], R_lo: float, drop_task=None) -> bool:
-    """
-    A schedulability test for a task in mode change
-    """
-    if drop_task is None:
-        drop_task = []
-
-    R_mc, ok_mc = calculate_wcrt_mc_terminate(task, tasks, drop_task, R_lo)
-    if not ok_mc:
-        return False
-
-    return True
-
-
-def calculate_wcrt_lo(cur_task: Task, tasks: List[Task], max_iter: int = 1000, tol: float = 1e-6) -> Tuple[float, bool]:
-    """
-    Calculate the worst-case response time (WCRT) of a task (LO or HI) in LO mode.
-
-    Parameters:
-        cur_task: The task to compute WCRT for.
-        tasks: All tasks in the system, must have 'priority' assigned.
-        max_iter: Maximum number of iterations.
-        tol: Convergence tolerance.
-    Returns:
-        R_lo: WCRT in LO mode. Returns float('inf') if it does not converge or exceeds deadline.
-        flag: True if WCRT converged and does not exceed deadline, False otherwise.
+    R_i^{LO} = C_i^{LO}
+        + Σ_{τ_h ∈ hpH_i} ⌈R_i^{LO}/T_h⌉ * C_h^{LO}
+        + Σ_{τ_l ∈ hpL_i} η(R_i^{LO}, T_l, m_l + x_l^L, k_l) * C_l^{LO}
     """
     C_lo = cur_task.wcet_lo
     hp_tasks = [t for t in tasks if t.priority < cur_task.priority]
@@ -166,383 +50,251 @@ def calculate_wcrt_lo(cur_task: Task, tasks: List[Task], max_iter: int = 1000, t
     hp_lo = [t for t in hp_tasks if t.criticality == "LO"]
 
     R_prev = 0.0
-    R_lo = C_lo
+    R = C_lo
     iter_count = 0
 
-    while abs(R_lo - R_prev) > tol and iter_count <= max_iter:
-        R_prev = R_lo
-        # higher priority HI tasks interference in LO mode
+    while abs(R - R_prev) > tol and iter_count <= max_iter:
+        R_prev = R
+
         interference_hi = sum(math.ceil(R_prev / t.period) * t.wcet_lo for t in hp_hi)
 
-        # higher priority LO tasks interference in LO mode
         interference_lo = 0
-        for task_q in hp_lo:
-            if not task_q.is_backup_subblock:
-                m_q = task_q.mk.m
-                k_q = task_q.mk.k
-                x_q = task_q.mk.x
-                effective_m = m_q + x_q
-                # d_q = math.ceil(R_prev / task_q.period) % k_q
-                # if d_q == 0:
-                #     num_lo = math.ceil(R_prev / (k_q * task_q.period)) * effective_m
-                # else:
-                #     num_lo = math.ceil(R_prev / (k_q * task_q.period)) * effective_m - max(effective_m - d_q, 0)
-                num_lo = calculate_mk_jobs(R_prev, task_q.period, effective_m, k_q)
-                interference_lo += num_lo * task_q.wcet_lo
-        R_lo = C_lo + interference_hi + interference_lo
-        # if R_lo < R_prev:
-        #     print("Rlo",R_lo,"R_pre",R_prev)
-        #     for t in tasks:
-        #         print(t)
-        #     print("curr",cur_task)
-        #     print("count=",iter_count)
-        #     breakpoint()
-        if R_lo > cur_task.deadline:
-            return R_lo, False
+        for t in hp_lo:
+            m_eff = t.mk.m + t.mk.x_l  # m_l + x_l^L
+            num_mand = calculate_mk_jobs(R_prev, t.period, m_eff, t.mk.k)
+            interference_lo += num_mand * t.wcet_lo
+
+        R = C_lo + interference_hi + interference_lo
+
+        if R > cur_task.deadline:
+            return R, False
         iter_count += 1
 
     if iter_count > max_iter:
-        flag = False
-        # print(f"Warning: Task {cur_task.id} WCRT did not converge after {max_iter} iterations in LO mode")
-    else:
-        # flag indicates whether response time is within deadline
-        flag = R_lo <= cur_task.deadline
-
-    return R_lo, flag
+        return R, False
+    return R, R <= cur_task.deadline
 
 
-def calculate_wcrt_hi(cur_task: Task, tasks: List[Task], drop_tasks: List[Task], max_iter: int = 1000,
-                      tol: float = 1e-6) -> Tuple[float, bool]:
+# ---------------------------------------------------------------------------
+# R_i^* — Mode-switch WCRT
+# ---------------------------------------------------------------------------
+
+def calculate_wcrt_mc(cur_task: Task, tasks: List[Task], R_lo: float,
+                      drop_tasks: List[Task] = None,
+                      max_iter: int = 1000, tol: float = 1e-6) -> Tuple[float, bool]:
+    r"""
+    R_i^* = C_i^{L_i}
+        + sum_{h in hpH_i} ceil(R_i^*/T_h) * C_h^{HI}
+        + sum_{l in hpL_i} eta(R_i^{LO}, T_l, m_l + x_l^L, k_l) * C_l^{LO}
+        + sum_{l in hpL_i \ drop} [eta(R_i^*, T_l, m_l + x_l^S, k_l)
+                                     - eta(R_i^{LO}, T_l, m_l + x_l^S, k_l)] * C_l^{LO}
+
+    C_i^{L_i} = wcet_hi for HI, wcet_lo for LO.
+    Dropped LO tasks are excluded from the continuation part.
     """
-    Calculate the worst-case response time (WCRT) of a task (LO or HI) in HI mode.
-
-    Parameters:
-        cur_task: The task to compute WCRT for.
-        tasks: All tasks in the system, must have 'priority' assigned.
-        max_iter: Maximum number of iterations.
-        tol: Convergence tolerance.
-    Returns:
-        R_hi: WCRT in HI mode. Returns float('inf') if it does not converge or exceeds deadline.
-        flag: True if WCRT converged and does not exceed deadline, False otherwise.
-    """
-    C_hi = cur_task.wcet_hi
-    hp_tasks = [t for t in tasks if t.priority < cur_task.priority]
-    hp_hi = [t for t in hp_tasks if t.criticality == "HI"]
-    hp_lo = [t for t in hp_tasks if t.criticality == "LO" and t not in drop_tasks]
-
-    R_prev = 0.0
-    R_hi = C_hi
-    iter_count = 0
-
-    while abs(R_hi - R_prev) > tol and iter_count <= max_iter:
-        R_prev = R_hi
-        # higher priority HI tasks interference in HI mode
-        interference_hi = sum(math.ceil(R_prev / t.period) * t.wcet_hi for t in hp_hi)
-
-        # higher priority LO tasks interference in HI mode
-        interference_lo = 0
-        for task_q in hp_lo:
-            m_q = task_q.mk.m
-            k_q = task_q.mk.k
-            dx_q = task_q.mk.dx
-            effective_m_d = m_q + dx_q
-            # d_q = math.ceil(R_prev / task_q.period) % k_q
-            # if d_q == 0:
-            #     num_lo_hi = math.ceil(R_prev / (k_q * task_q.period)) * m_q
-            # else:
-            #     num_lo_hi = math.ceil(R_prev / (k_q * task_q.period)) * m_q - max(m_q - d_q, 0)
-            num_lo_hi = calculate_mk_jobs(R_prev, task_q.period, effective_m_d, k_q)
-            interference_lo += num_lo_hi * task_q.wcet_lo
-        R_hi = C_hi + interference_hi + interference_lo  # for LO task, Chi=Clo
-        if R_hi > cur_task.deadline:
-            return R_hi, False
-        iter_count += 1
-
-    if iter_count > max_iter:
-        flag = False
-        # print(f"Warning: Task {cur_task.id} WCRT did not converge after {max_iter} iterations in HI mode")
-    else:
-        # flag indicates whether response time is within deadline
-        flag = R_hi <= cur_task.deadline
-
-    return R_hi, flag
-
-
-def calculate_wcrt_mc_terminate(cur_task: Task, tasks: List[Task], drop_tasks: List[Task], R_lo: float,
-                                max_iter: int = 1000, tol: float = 1e-6) -> Tuple[
-    float, bool]:
-    """
-    Calculate the worst-case response time (WCRT) of a task in mode-change (MC) and dropped some LO tasks in HI mode.
-
-    Parameters:
-        cur_task: Task to compute WCRT for.
-        tasks: All tasks in the system (must have 'priority' assigned).
-        R_lo: LO-mode WCRT of this task.
-        max_iter: Maximum number of iterations.
-        tol: Convergence tolerance.
-
-    Returns:
-        R_mc: Mode-change WCRT (float)
-        flag: True if R_mc <= deadline, False otherwise
-    """
+    if drop_tasks is None:
+        drop_tasks = []
 
     if cur_task.criticality == "HI":
         C_max = cur_task.wcet_hi
     else:
         if cur_task in drop_tasks:
-            return 0.0, True
+            return 0.0, True  # dropped LO task has no mode-switch requirement
         C_max = cur_task.wcet_lo
 
-    # Identify higher priority tasks
     hp_tasks = [t for t in tasks if t.priority < cur_task.priority]
     hp_hi = [t for t in hp_tasks if t.criticality == "HI"]
     hp_lo = [t for t in hp_tasks if t.criticality == "LO"]
 
+    # Pre-compute the LO-mode contribution (uses x_l^L for all LO hp tasks)
+    lo_contribution_fixed = 0.0
+    for t in hp_lo:
+        m_eff_L = t.mk.m + t.mk.x_l
+        lo_contribution_fixed += calculate_mk_jobs(R_lo, t.period, m_eff_L, t.mk.k) * t.wcet_lo
+
     R_prev = 0.0
-    R_mc = R_lo  # initial guess
+    R = R_lo  # initial guess
     iter_count = 0
 
-    while abs(R_mc - R_prev) > tol and iter_count < max_iter:
-        R_prev = R_mc
+    while abs(R - R_prev) > tol and iter_count < max_iter:
+        R_prev = R
 
-        # HI tasks interference in mode change (wcet_hi > wcet_lo)
         interference_hi = sum(math.ceil(R_prev / t.period) * t.wcet_hi for t in hp_hi)
 
-        # LO tasks interference in mode change (LO + HI mode contributions combined)
-        interference_lo_total = 0
+        # Continuation part: only non-dropped LO tasks with x_l^S
+        lo_continuation = 0.0
+        for t in hp_lo:
+            if t in drop_tasks:
+                continue
+            m_eff_S = t.mk.m + t.mk.x_s
+            total_m = calculate_mk_jobs(R_prev, t.period, m_eff_S, t.mk.k)
+            pre_m = calculate_mk_jobs(R_lo, t.period, m_eff_S, t.mk.k)
+            lo_continuation += max(0, total_m - pre_m) * t.wcet_lo
 
-        # for q in hp_lo:
-        #     m_q = q.mk.m
-        #     k_q = q.mk.k
-        #     x_q = q.mk.x
-        #     effective_m_q = m_q + x_q
-        #
-        #     if q in drop_tasks:
-        #         count = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
-        #         interference_lo_total += count * q.wcet_lo
-        #     else:
-        #         count_A = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
-        #
-        #         total_m = calculate_mk_jobs(R_prev, q.period, m_q, k_q)
-        #         pre_m = calculate_mk_jobs(R_lo, q.period, m_q, k_q)
-        #         count_B = max(0, total_m - pre_m)
-        #
-        #         interference_lo_total += (count_A + count_B) * q.wcet_lo
-        for q in hp_lo:
-            m_q = q.mk.m
-            k_q = q.mk.k
-            x_q = q.mk.x
-            dx_q = q.mk.dx
-            effective_m_q = m_q + x_q
-            effective_m_q_d = m_q + dx_q
+        R = C_max + interference_hi + lo_contribution_fixed + lo_continuation
 
-            count = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
-            interference_lo_total += count * q.wcet_lo
-
-            if q not in drop_tasks:
-                # count_A = calculate_mk_jobs(R_lo, q.period, effective_m_q, k_q)
-
-                total_m = calculate_mk_jobs(R_prev, q.period, effective_m_q_d, k_q)
-                pre_m = calculate_mk_jobs(R_lo, q.period, effective_m_q_d, k_q)
-                count_B = max(0, total_m - pre_m)
-
-                interference_lo_total += count_B * q.wcet_lo
-        # Update R_mc
-        R_mc = C_max + interference_hi + interference_lo_total
-        if R_mc > cur_task.deadline:
-            return R_mc, False
+        if R > cur_task.deadline:
+            return R, False
         iter_count += 1
 
     if iter_count >= max_iter:
-        return R_mc, False
-        # print(f"Warning: Task {cur_task.id} WCRT did not converge after {max_iter} iterations in mode-change")
+        return R, False
+    return R, R <= cur_task.deadline
+
+
+# ---------------------------------------------------------------------------
+# R_i^{HI} — Stable HI-mode WCRT
+# ---------------------------------------------------------------------------
+
+def calculate_wcrt_hi(cur_task: Task, tasks: List[Task],
+                      drop_tasks: List[Task] = None,
+                      max_iter: int = 1000, tol: float = 1e-6) -> Tuple[float, bool]:
+    r"""
+    R_i^{HI} = C_i^{L_i}
+        + sum_{h in hpH_i} ceil(R_i^{HI}/T_h) * C_h^{HI}
+        + sum_{l in hpL_i \ drop} eta(R_i^{HI}, T_l, m_l + x_l^H, k_l) * C_l^{LO}
+    """
+    if drop_tasks is None:
+        drop_tasks = []
+
+    if cur_task.criticality == "HI":
+        C_max = cur_task.wcet_hi
     else:
-        # flag indicates whether response time is within deadline
-        return R_mc, (R_mc <= cur_task.deadline)
+        if cur_task in drop_tasks:
+            return 0.0, True  # dropped LO task is suspended
+        C_max = cur_task.wcet_lo
 
-
-def calculate_mk_jobs(time_window: float, T: float, m: int, k: int) -> int:
-    """Helper to calculate max jobs in a window given (m,k) constraint."""
-    # Assuming Deeply-Red pattern for worst-case interference
-    if time_window <= 0: return 0
-
-    total_jobs = math.ceil(time_window / T)
-
-    num_cycles = total_jobs // k
-    remainder = total_jobs % k
-
-    return num_cycles * m + min(remainder, m)
-
-
-def calculate_wcrt_lo_AMCrtbWH(cur_task: Task, tasks: List[Task], max_iter: int = 1000, tol: float = 1e-6) -> Tuple[
-    float, bool]:
-    """
-       Calculate the worst-case response time (WCRT) of a task (LO or HI) in LO mode.
-       cite:"Gettings O, Quinton S, Davis R I. Mixed criticality systems with weakly-hard constraints[C]
-       //Proceedings of the 23rd International Conference on Real Time and Networks Systems. 2015: 237-246."
-
-       Parameters:
-           cur_task: The task to compute WCRT for.
-           tasks: All tasks in the system, must have 'priority' assigned.
-           max_iter: Maximum number of iterations.
-           tol: Convergence tolerance.
-       Returns:
-           R_lo: WCRT in LO mode. Returns float('inf') if it does not converge or exceeds deadline.
-           flag: True if WCRT converged and does not exceed deadline, False otherwise.
-       """
-    C_lo = cur_task.wcet_lo
-    hp_tasks = [t for t in tasks if t.priority < cur_task.priority]
-    R_prev = 0.0
-    R_lo = C_lo
-    iter_count = 0
-
-    while abs(R_lo - R_prev) > tol and iter_count <= max_iter:
-        R_prev = R_lo
-        # higher priority tasks interference in LO mode
-        interference = sum(math.ceil(R_prev / t.period) * t.wcet_lo for t in hp_tasks)
-        R_lo = C_lo + interference
-        if R_lo > cur_task.deadline:
-            return R_lo, False
-        iter_count += 1
-
-    if iter_count > max_iter:
-        flag = False
-        # print(f"Warning: Task {cur_task.id} WCRT did not converge after {max_iter} iterations in LO mode")
-    else:
-        # flag indicates whether response time is within deadline
-        flag = R_lo <= cur_task.deadline
-
-    return R_lo, flag
-
-
-def calculate_wcrt_hi_AMCrtbWH(cur_task: Task, tasks: List[Task], max_iter: int = 1000, tol: float = 1e-6) -> Tuple[
-    float, bool]:
-    """
-    Calculate the worst-case response time (WCRT) of a task (LO or HI) in HI mode.
-    cite:"Gettings O, Quinton S, Davis R I. Mixed criticality systems with weakly-hard constraints[C]
-    //Proceedings of the 23rd International Conference on Real Time and Networks Systems. 2015: 237-246."
-    Parameters:
-        cur_task: The task to compute WCRT for.
-        tasks: All tasks in the system, must have 'priority' assigned.
-        max_iter: Maximum number of iterations.
-        tol: Convergence tolerance.
-    Returns:
-        R_hi: WCRT in HI mode. Returns float('inf') if it does not converge or exceeds deadline.
-        flag: True if WCRT converged and does not exceed deadline, False otherwise.
-    """
-    C_hi = cur_task.wcet_hi
     hp_tasks = [t for t in tasks if t.priority < cur_task.priority]
     hp_hi = [t for t in hp_tasks if t.criticality == "HI"]
-    hp_lo = [t for t in hp_tasks if t.criticality == "LO"]
+    hp_lo = [t for t in hp_tasks if t.criticality == "LO" and t not in drop_tasks]
 
     R_prev = 0.0
-    R_hi = C_hi
+    R = C_max
     iter_count = 0
 
-    while abs(R_hi - R_prev) > tol and iter_count <= max_iter:
-        R_prev = R_hi
-        # higher priority HI tasks interference in HI mode
+    while abs(R - R_prev) > tol and iter_count <= max_iter:
+        R_prev = R
+
         interference_hi = sum(math.ceil(R_prev / t.period) * t.wcet_hi for t in hp_hi)
 
-        # higher priority LO tasks interference in HI mode
         interference_lo = 0
-        for task_q in hp_lo:
-            T_q = task_q.period
-            m_q = task_q.mk.m
-            k_q = task_q.mk.k
-            s_q = k_q - m_q
-            num_lo_hi = math.ceil(R_prev / T_q)
+        for t in hp_lo:
+            m_eff_H = t.mk.m + t.mk.x_h  # m_l + x_l^H
+            num_mand = calculate_mk_jobs(R_prev, t.period, m_eff_H, t.mk.k)
+            interference_lo += num_mand * t.wcet_lo
 
-            subtract_num = 0
-            for n in range(1, s_q + 1):
-                subtract_num += math.ceil((R_prev - (k_q - n) * T_q) / (T_q * k_q))
+        R = C_max + interference_hi + interference_lo
 
-            interference_lo += (num_lo_hi - subtract_num) * task_q.wcet_lo
-
-        R_hi = C_hi + interference_hi + interference_lo
-        if R_hi > cur_task.deadline:
-            return R_hi, False
+        if R > cur_task.deadline:
+            return R, False
         iter_count += 1
 
     if iter_count > max_iter:
-        flag = False
-        # print(f"Warning: Task {cur_task.id} WCRT did not converge after {max_iter} iterations in HI mode")
-    else:
-        # flag indicates whether response time is within deadline
-        flag = R_hi <= cur_task.deadline
-
-    return R_hi, flag
+        return R, False
+    return R, R <= cur_task.deadline
 
 
-def calculate_wcrt_mc_AMCrtbWH(cur_task: Task, tasks: List[Task], R_lo: float, max_iter: int = 1000,
-                               tol: float = 1e-6) -> Tuple[float, bool]:
+# ---------------------------------------------------------------------------
+# Individual schedulability tests
+# ---------------------------------------------------------------------------
+
+def test_aLO(task: Task, tasks: List[Task]) -> bool:
+    """Test whether a single task passes LO-mode RTA."""
+    _, ok = calculate_wcrt_lo(task, tasks)
+    return ok
+
+
+def test_aMC(task: Task, tasks: List[Task], R_lo: float,
+             drop_tasks: List[Task] = None) -> bool:
+    """Test whether a single task passes mode-switch RTA."""
+    _, ok = calculate_wcrt_mc(task, tasks, R_lo, drop_tasks)
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# Full task-set schedulability tests
+# ---------------------------------------------------------------------------
+
+def schedulability_test_lo(tasks: List[Task]) -> bool:
     """
-    Calculate the worst-case response time (WCRT) of a task (LO or HI) in mode change.
-    cite:"Gettings O, Quinton S, Davis R I. Mixed criticality systems with weakly-hard constraints[C]
-    //Proceedings of the 23rd International Conference on Real Time and Networks Systems. 2015: 237-246."
-    Parameters:
-        cur_task: The task to compute WCRT for.
-        tasks: All tasks in the system, must have 'priority' assigned.
-        R_lo: LO-mode WCRT of this task.
-        max_iter: Maximum number of iterations.
-        tol: Convergence tolerance.
-    Returns:
-        R_hi: WCRT in HI mode. Returns float('inf') if it does not converge or exceeds deadline.
-        flag: True if WCRT converged and does not exceed deadline, False otherwise.
+    Test LO-mode schedulability for all tasks in the set.
     """
-    hp_tasks = [t for t in tasks if t.priority < cur_task.priority]
-    hp_hi = [t for t in hp_tasks if t.criticality == "HI"]
-    hp_lo = [t for t in hp_tasks if t.criticality == "LO"]
+    for task in tasks:
+        _, ok = calculate_wcrt_lo(task, tasks)
+        if not ok:
+            return False
+    return True
 
-    R_prev = 0.0
-    R_mc = R_lo  # initial guess
-    iter_count = 0
-    if cur_task.criticality == "HI":
-        while abs(R_mc - R_prev) > tol and iter_count <= max_iter:
-            R_prev = R_mc
 
-            # HI tasks interference in mode change (wcet_hi > wcet_lo)
-            interference_hi = sum(math.ceil(R_prev / t.period) * t.wcet_hi for t in hp_hi)
+def schedulability_test_hi(tasks: List[Task],
+                           drop_tasks: List[Task] = None) -> bool:
+    """
+    Full MCS schedulability test: LO mode → mode switch → HI mode for every task.
+    Returns True only if all three analyses pass for each task.
+    """
+    if drop_tasks is None:
+        drop_tasks = []
 
-            # LO tasks interference in mode change
-            interference_lo = 0
-            for task_q in hp_lo:
-                T_q = task_q.period
-                m_q = task_q.mk.m
-                k_q = task_q.mk.k
-                s_q = k_q - m_q
-                num_lo_hi = math.ceil(R_prev / T_q)
-                x = math.ceil(R_lo / T_q) * T_q
-                subtract_num = 0
-                for n in range(s_q, k_q + 1):
-                #for n in range(1, s_q + 1):
-                    subtract_num += max(math.ceil((R_prev - (k_q - n) * T_q - x) / (T_q * k_q)), 0)
+    for task in tasks:
+        # LO mode
+        R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
+        if not ok_lo:
+            return False
 
-                interference_lo += (num_lo_hi - subtract_num) * task_q.wcet_lo
+        # Mode switch
+        _, ok_mc = calculate_wcrt_mc(task, tasks, R_lo, drop_tasks)
+        if not ok_mc:
+            return False
 
-            R_mc = cur_task.wcet_hi + interference_hi + interference_lo
-            if R_mc > cur_task.deadline:
-                return R_mc, False
-            iter_count += 1
-    else:
-        while abs(R_mc - R_prev) > tol and iter_count <= max_iter:
-            R_prev = R_mc
-            # HI tasks interference in mode change (wcet_hi > wcet_lo)
-            interference_hi = sum(math.ceil(R_prev / t.period) * t.wcet_hi for t in hp_hi)
+        # Stable HI mode
+        _, ok_hi = calculate_wcrt_hi(task, tasks, drop_tasks)
+        if not ok_hi:
+            return False
 
-            # LO tasks interference in mode change
-            interference_lo = sum(math.ceil(R_prev / t.period) * t.wcet_lo for t in hp_lo)
+    return True
 
-            R_mc = cur_task.wcet_lo + interference_hi + interference_lo
-            if R_mc > cur_task.deadline:
-                return R_mc, False
-            iter_count += 1
 
-    if iter_count > max_iter:
-        flag = False
-        # print(f"Warning: Task {cur_task.id} WCRT did not converge after {max_iter} iterations in HI mode")
-    else:
-        # flag indicates whether response time is within deadline
-        flag = R_mc <= cur_task.deadline
+def classify_lo_tasks(tasks: List[Task],
+                      drop_tasks: List[Task] = None) -> Optional[Tuple[List[Task], List[Task]]]:
+    r"""
+    Classify LO tasks into retained (Gamma_LO*) and suspended (overline{Gamma}_LO*)
+    based on mode-switch schedulability.
 
-    return R_mc, flag
+    LO tasks are processed in priority order (highest first). When a task is
+    classified as suspended it is excluded from subsequent tasks' mode-switch
+    interference.
+
+    LO-mode failure is a hard error: returns None.
+    Mode-switch failure -> suspended.
+
+    Returns: (retained, suspended) on success, None if any LO task fails LO-mode RTA.
+    """
+    if drop_tasks is None:
+        drop_tasks = []
+
+    # Work on a copy so we can accumulate suspended tasks without mutating
+    # the caller's list until we're done.
+    active_drops = list(drop_tasks)
+
+    # Only LO tasks, sorted by priority: highest priority first (smallest number)
+    lo_tasks = sorted(
+        [t for t in tasks if t.criticality == "LO"],
+        key=lambda t: t.priority,
+    )
+
+    retained: List[Task] = []
+    suspended: List[Task] = []
+
+    for task in lo_tasks:
+        R_lo, ok_lo = calculate_wcrt_lo(task, tasks)
+        if not ok_lo:
+            return None  # hard failure
+
+        _, ok_mc = calculate_wcrt_mc(task, tasks, R_lo, active_drops)
+        if ok_mc:
+            retained.append(task)
+        else:
+            suspended.append(task)
+            active_drops.append(task)
+
+    return retained, suspended
