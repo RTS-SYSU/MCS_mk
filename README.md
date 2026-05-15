@@ -1,43 +1,98 @@
-# Utility-Aware Mixed-Criticality Scheduling with Weakly-Hard
+# Augmented Weakly-Hard Scheduling for Mixed-Criticality Multicore Systems
 
-🚧 **Work in Progress (WIP)** 🚧
+Implementation of an augmented weakly-hard importance-aware scheduling framework
+for fully-partitioned mixed-criticality systems.
 
-This repository contains the ongoing development of a **utility-aware scheduling framework for mixed-criticality systems (MCS)** on multicore platforms.
+## Overview
 
----
-## ❗ Academic Integrity and Usage Policy
+LO-criticality tasks are assigned baseline weakly-hard constraints $(m_i, k_i)$.
+Available slack is exploited by augmenting the number of mandatory jobs to
+$(m_i + x_i, k_i)$. The augmented level $x_i$ varies across three modes:
 
-This repository contains **original, unpublished research work**.
+- **LO mode** ($x_i^{\mathrm{L}}$): promote according to augmented importance density.
+- **Mode switch** ($x_i^{\mathrm{S}}$): degrade to preserve schedulability under HI-mode execution.
+- **Stable HI mode** ($x_i^{\mathrm{H}}$): recover suspended tasks by sacrificing augmented levels from retained tasks; then re-augment retained tasks using remaining slack.
 
-* ❌ **Direct copying, plagiarism, or re-publication of the code, algorithms, or ideas without proper attribution is strictly prohibited.**
-* ❌ Submitting this work (in whole or in part) as your own research, including papers, reports, or projects, is considered **academic misconduct**.
-* ✅ If you are inspired by this work, you must provide **clear and explicit citation** to the original authors.
+The importance achieved by each LO task is
 
-This statement applies to both **code** and **research ideas/designs** presented in this repository.
+$$ I_i(x_i) = \mu_i \left(1 + \beta \frac{x_i}{k_i - m_i}\right), \quad 0 < \beta < 1. $$
 
----
+Total system performance is $I^{\chi} = \sum a_i^{\chi} I_i(x_i^{\chi})$, normalised by $I^{\max}$.
 
-## 📜 License and Copyright
+## Code Structure
+
+```
+core/                   Task, MKPattern, Processor, Job, importance model
+scheduling/
+  sched_test.py          RTA: LO-mode, mode-switch, stable-HI WCRT
+  priority_assignment.py DMPO priority assignment
+  task_partitioning.py   Baseline-first WFD partitioning + classification
+  augmentation.py        LO-mode augmentation & mode-switch degradation
+  recovery.py            Stable-HI recovery & post-augmentation
+experiments/
+  comparison/            Baseline methods (Static, AugOnly, MaxCount)
+  vary_utilization/      H-mode performance vs. utilisation
+  vary_cf/               H-mode performance vs. C_HI/C_LO ratio
+  vary_mk/               H-mode performance vs. (m,k) constraint
+  mode_performance/      Per-mode performance (L, S, H) + feasibility rate
+  beta_sensitivity/      Performance sensitivity to beta
+  suspend_recovery/      Suspend count & recovery success rate vs. utilisation
+  performance.py         Shared performance metric functions
+utils/
+  generate_taskset.py    Task set generation via DRS
+  drs.py                 Dirichlet Rescale Algorithm (Griffin et al., 2020)
+  logger.py              Logging utility
+```
+
+## Dependencies
+
+Python 3.10+, NumPy, SciPy, Matplotlib.
+
+```bash
+pip install numpy scipy matplotlib
+```
+
+## Running Experiments
+
+```bash
+# HI-mode performance vs utilisation
+python -m experiments.vary_utilization.exp
+
+# HI-mode performance vs C_HI/C_LO ratio
+python -m experiments.vary_cf.exp
+
+# HI-mode performance vs (m,k) constraint
+python -m experiments.vary_mk.exp
+
+# Per-mode (L, S, H) performance + Static baseline
+python -m experiments.mode_performance.exp_vary_utilization
+
+# Beta sensitivity
+python -m experiments.beta_sensitivity.exp_vary_beta
+
+# Suspend count & recovery rate
+python -m experiments.suspend_recovery.exp_vary_utilization
+
+# Quick pipeline test (1 run per point)
+python -m experiments.test_pipeline
+```
+
+Append `--test` to any experiment for a single-run quick check.
+
+Configuration (task count, utilisation range, beta, threads, runs) is at the top of each experiment file.
+
+## Comparison Methods
+
+| Method | Augmentation | Recovery | Description |
+|---|---|---|---|
+| Static-(m,k) | $x \equiv 0$ | None | Baseline lower bound |
+| Augmented-Only | L + S | None | Post-augment in H only |
+| MaxCount Recovery | L + S | Low-util-first | Maximises recovery count |
+| **Proposed** | L + S + H | Importance-based | Maximises importance gain |
+
+## License
 
 © 2026 The Authors. All rights reserved.
 
-This project is currently **not released under an open-source license**.
-
-* The contents of this repository are provided **for academic reference only**.
-* **Redistribution, modification, or commercial use is not permitted** without explicit permission.
-* A formal open-source license (e.g., MIT) may be applied after official publication.
-
----
-
-## 🤝 Contributions
-
-Contributions and discussions are welcome.
-Please open an issue before submitting major changes, as the project structure is still evolving.
-
----
-
-## 📬 Contact
-
-For questions, collaboration, or permission requests, please open an issue in this repository.
-
----
+This repository contains unpublished research work. Redistribution, modification,
+or commercial use is not permitted without explicit permission.
