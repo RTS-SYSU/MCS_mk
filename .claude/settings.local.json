@@ -12,7 +12,12 @@
       "PowerShell(python -m py_compile experiments/vary_utilization/exp.py; python -m py_compile experiments/vary_cf/exp.py; python -m py_compile experiments/vary_mk/exp.py; Write-Output \"all OK\")",
       "PowerShell(git add *)",
       "PowerShell(git push *)",
-      "PowerShell(python -m py_compile scheduling/recovery.py; python -m py_compile experiments/comparison/maxcount_recovery.py; Write-Output \"compile OK\")"
+      "PowerShell(python -m py_compile scheduling/recovery.py; python -m py_compile experiments/comparison/maxcount_recovery.py; Write-Output \"compile OK\")",
+      "Bash(cat)",
+      "Bash(python3 /tmp/update_experiments.py)",
+      "PowerShell(python experiments/_update_batch.py)",
+      "PowerShell(python -c \"open\\('experiments/mode_performance/exp_vary_utilization.py', encoding='utf-8'\\).read\\(\\)[:100]; print\\('ok'\\)\")",
+      "PowerShell(python -c \"import py_compile; py_compile.compile\\('experiments/vary_cf/exp.py', doraise=True\\)\")"
     ]
   }
 }

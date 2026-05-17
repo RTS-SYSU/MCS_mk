@@ -43,6 +43,8 @@ UTIL_START = 0.40
 UTIL_END   = 0.90
 UTIL_STEP  = 0.05
 N_RUNS     = 1000
+N_FEASIBLE = 500          # target feasible sets per point
+MAX_CONSECUTIVE_FAILS = 100  # stop if consecutive fails exceed this
 NUM_THREADS = 5
 
 OUTPUT_DIR = "experiments/beta_sensitivity/data"
@@ -97,9 +99,12 @@ def run_util_point(target_util: float,
     """
     accum: Dict[float, float] = {b: 0.0 for b in BETA_VALUES}
     feasible = 0
+    consec_fails = 0
+    total_attempts = 0
 
-    for run_idx in range(n_runs):
-        random.seed(base_seed + int(target_util * 10000) + run_idx)
+    while feasible < N_FEASIBLE and consec_fails < MAX_CONSECUTIVE_FAILS:
+        total_attempts += 1
+        random.seed(base_seed + int(target_util * 10000) + total_attempts)
         tasks = generate_taskset(
             total_processor=NUM_PROCESSORS, total_task=TOTAL_TASKS,
             targetU=target_util, cp=CP, cf=CF, xf=XF,
@@ -108,7 +113,9 @@ def run_util_point(target_util: float,
 
         processors = partition_tasks(tasks, NUM_PROCESSORS)
         if processors is None:
+            consec_fails += 1
             continue
+        consec_fails = 0
         feasible += 1
 
         perfs = _eval_betas(processors, lo_all)
@@ -117,9 +124,12 @@ def run_util_point(target_util: float,
 
     cols = [str(b) for b in BETA_VALUES]
     if feasible == 0:
-        return {"feasible": 0, **{c: float('nan') for c in cols}}
-
-    return {"feasible": feasible, **{c: accum[float(c)] / feasible for c in cols}}
+        result = {c: float('nan') for c in cols}
+    else:
+        result = {c: accum[float(c)] / feasible for c in cols}
+    result["total_attempts"] = total_attempts
+    result["feasible"] = feasible
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +143,10 @@ def main():
         util_values.append(u)
         u = round(u + UTIL_STEP, 10)
 
-    cols = ["feasible"] + [str(b) for b in BETA_VALUES]
-    results: Dict[str, List[float]] = {c: [0.0] * len(util_values) for c in cols}
+    beta_cols = [str(b) for b in BETA_VALUES]
+    results: Dict[str, List[float]] = {c: [0.0] * len(util_values) for c in beta_cols}
+    total_attempts = [0] * len(util_values)
+    total_feasible = [0] * len(util_values)
 
     t0 = time.time()
 
@@ -147,24 +159,24 @@ def main():
         for fut in as_completed(future_to_idx):
             i, u_val = future_to_idx[fut]
             perfs = fut.result()
-            for c in cols:
+            for c in beta_cols:
                 results[c][i] = perfs[c]
-            rate = perfs["feasible"] / N_RUNS * 100
+            total_attempts[i] = perfs.get("total_attempts", 0)
+            total_feasible[i] = perfs.get("feasible", 0)
             elapsed = time.time() - t0
-            beta_strs = "  ".join(f"beta={b}:{perfs[b]:.4f}" for b in [str(x) for x in BETA_VALUES])
-            print(f"[{elapsed:7.1f}s]  U={u_val:.2f}  feas={rate:.1f}%  {beta_strs}")
+            beta_strs = "  ".join(f"beta={b}:{perfs[b]:.4f}" for b in beta_cols)
+            print(f"[{elapsed:7.1f}s]  U={u_val:.2f}  "
+                  f"feas={total_feasible[i]}/{total_attempts[i]}  {beta_strs}")
 
     elapsed = time.time() - t0
     print(f"\nTotal time: {elapsed:.1f}s")
 
-    # ---- Save CSV ----
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
-        beta_cols = [str(b) for b in BETA_VALUES]
-        writer.writerow(["Utilization", "FeasibilityRate"] + beta_cols)
+        writer.writerow(["Utilization", "TotalAttempts", "Feasible"] + beta_cols)
         for i, u_val in enumerate(util_values):
-            row = [f"{u_val:.2f}", f"{results['feasible'][i] / N_RUNS:.6f}"]
+            row = [f"{u_val:.2f}", str(total_attempts[i]), str(total_feasible[i])]
             for c in beta_cols:
                 row.append(f"{results[c][i]:.6f}")
             writer.writerow(row)
@@ -206,5 +218,5 @@ if __name__ == "__main__":
     import sys
     if "--test" in sys.argv:
         print("=== Quick test mode (1 run per point) ===")
-        N_RUNS = 1
+        N_FEASIBLE = 1
     main()

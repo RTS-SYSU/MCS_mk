@@ -60,6 +60,8 @@ M_END = 9
 M_STEP = 1
 
 N_RUNS = 10000
+N_FEASIBLE = 500          # target feasible sets per point
+MAX_CONSECUTIVE_FAILS = 100  # stop if consecutive fails exceed this
 NUM_THREADS = 10
 
 OUTPUT_DIR = "experiments/vary_mk/data"
@@ -97,9 +99,13 @@ def run_m_point(m: int,
     methods = ["Static", "AugOnly", "MaxCount", "Proposed"]
     accum: Dict[str, float] = {mtd: 0.0 for mtd in methods}
     success = 0
+    consec_fails = 0
+    total_attempts = 0
 
-    for run_idx in range(n_runs):
-        random.seed(base_seed + m * 10000 + run_idx)
+    while success < N_FEASIBLE and consec_fails < MAX_CONSECUTIVE_FAILS:
+        total_attempts += 1
+
+        random.seed(base_seed + m * 10000 + total_attempts)
 
         tasks = generate_taskset(
             total_processor=NUM_PROCESSORS,
@@ -115,6 +121,7 @@ def run_m_point(m: int,
 
         processors = partition_tasks(tasks, NUM_PROCESSORS)
         if processors is None:
+            consec_fails += 1
             continue
 
         base = _deepcopy_procs(processors)
@@ -147,11 +154,18 @@ def run_m_point(m: int,
             stable_hi_recovery(p.tasks, p.drop_list, beta=beta)
         accum["Proposed"] += _perf_h(p_prop, lo_all, beta)
 
+        consec_fails = 0
+
+
         success += 1
 
     if success == 0:
-        return {mtd: float('nan') for mtd in methods}
-    return {mtd: accum[mtd] / success for mtd in methods}
+        result = {mtd: float('nan') for mtd in methods}
+    else:
+        result = {mtd: accum[mtd] / success for mtd in methods}
+    result["total_attempts"] = total_attempts
+    result["feasible"] = success
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -163,12 +177,10 @@ def main():
 
     m_values = list(range(M_START, M_END + 1, M_STEP))
 
-    results: Dict[str, List[float]] = {
-        "Static": [0.0] * len(m_values),
-        "AugOnly": [0.0] * len(m_values),
-        "MaxCount": [0.0] * len(m_values),
-        "Proposed": [0.0] * len(m_values),
-    }
+    methods = ["Static", "AugOnly", "MaxCount", "Proposed"]
+    results: Dict[str, List[float]] = {m: [0.0] * len(m_values) for m in methods}
+    total_attempts = [0] * len(m_values)
+    total_feasible = [0] * len(m_values)
 
     t0 = time.time()
 
@@ -181,10 +193,13 @@ def main():
         for fut in as_completed(future_to_idx):
             i, m_val = future_to_idx[fut]
             perfs = fut.result()
-            for mtd in results:
+            for mtd in methods:
                 results[mtd][i] = perfs[mtd]
+            total_attempts[i] = perfs.get("total_attempts", 0)
+            total_feasible[i] = perfs.get("feasible", 0)
             elapsed = time.time() - t0
             print(f"[{elapsed:6.1f}s]  m={m_val} (k={K_FIXED})  "
+                  f"feas={total_feasible[i]}/{total_attempts[i]}  "
                   f"Static={perfs['Static']:.4f}  "
                   f"AugOnly={perfs['AugOnly']:.4f}  "
                   f"MaxCount={perfs['MaxCount']:.4f}  "
@@ -196,10 +211,10 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["m"] + list(results.keys()))
+        writer.writerow(["m", "TotalAttempts", "Feasible"] + methods)
         for i, m_val in enumerate(m_values):
-            row = [str(m_val)]
-            for mtd in results:
+            row = [str(m_val), str(total_attempts[i]), str(total_feasible[i])]
+            for mtd in methods:
                 row.append(f"{results[mtd][i]:.6f}")
             writer.writerow(row)
     print(f"Saved: {OUTPUT_CSV}")
@@ -240,6 +255,5 @@ if __name__ == "__main__":
     import sys
     if "--test" in sys.argv:
         print("=== Quick test mode (1 run per point) ===")
-        N_RUNS = 1
-    print(f"=== (mk: {N_RUNS} runs per point) ===")
+        N_FEASIBLE = 1
     main()

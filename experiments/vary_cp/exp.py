@@ -1,11 +1,11 @@
 r"""
-CF-variation experiment (C_HI / C_LO ratio for HI tasks).
+CP-variation experiment (fraction of HI-criticality tasks).
 
-Varies CF from 1.0 to 3.0 (step 0.4).  Higher CF means HI tasks exert
-more mode-switch pressure.
+Varies CP from 0.1 to 0.9 (step 0.1).  More HI tasks means more tasks
+that may expand execution in mode switch.
 
-For each CF, generates N random task sets; only successfully partitioned
-+ classified sets are counted.
+For each CP, generates random task sets until N_FEASIBLE feasible sets
+are found or MAX_CONSECUTIVE_FAILS consecutive partitions fail.
 
 Compares four methods on Perf^H (normalized stable-HI performance):
   - Static-(m,k)
@@ -13,7 +13,7 @@ Compares four methods on Perf^H (normalized stable-HI performance):
   - MaxCount Recovery
   - Proposed
 
-Outputs a CSV table and a line chart in the data/ folder.
+Outputs a CSV table and a line chart in experiments/vary_cp/data/.
 """
 
 import copy
@@ -48,22 +48,22 @@ from utils.generate_taskset import generate_taskset
 NUM_PROCESSORS = 4
 TASKS_PER_CORE = 20
 TOTAL_TASKS = NUM_PROCESSORS * TASKS_PER_CORE  # 80
-CP = 0.5        # fraction of HI tasks
+CF = 2.0        # C_HI / C_LO for HI tasks
 XF = 1.0        # C_HI / C_LO for LO tasks
 BETA = 0.5
 TARGET_U = 0.65  # fixed utilisation
 
-CF_START = 1.0
-CF_END = 3.0
-CF_STEP = 0.4
-N_RUNS = 10000
+CP_START = 0.1
+CP_END = 0.9
+CP_STEP = 0.1
+N_RUNS = 20000
 N_FEASIBLE = 500          # target feasible sets per point
-MAX_CONSECUTIVE_FAILS = 100  # stop if consecutive fails exceed this
-NUM_THREADS = 150
+MAX_CONSECUTIVE_FAILS = 1000  # stop if consecutive fails exceed this
+NUM_THREADS = 50
 
-OUTPUT_DIR = "experiments/vary_cf/data"
-OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vary_cf.csv")
-OUTPUT_PLOT = os.path.join(OUTPUT_DIR, "vary_cf.png")
+OUTPUT_DIR = "experiments/vary_cp/data"
+OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vary_cp.csv")
+OUTPUT_PLOT = os.path.join(OUTPUT_DIR, "vary_cp.png")
 
 
 # ---------------------------------------------------------------------------
@@ -86,10 +86,10 @@ def _deepcopy_procs(processors: List[Processor]) -> List[Processor]:
 
 
 # ---------------------------------------------------------------------------
-# Single CF point
+# Single CP point
 # ---------------------------------------------------------------------------
 
-def run_cf_point(cf: float,
+def run_cp_point(cp: float,
                  n_runs: int,
                  beta: float,
                  base_seed: int = 0) -> Dict[str, float]:
@@ -102,14 +102,14 @@ def run_cf_point(cf: float,
     while success < N_FEASIBLE and consec_fails < MAX_CONSECUTIVE_FAILS:
         total_attempts += 1
 
-        random.seed(base_seed + int(cf * 10000) + total_attempts)
+        random.seed(base_seed + int(cp * 10000) + total_attempts)
 
         tasks = generate_taskset(
             total_processor=NUM_PROCESSORS,
             total_task=TOTAL_TASKS,
             targetU=TARGET_U,
-            cp=CP,
-            cf=cf,
+            cp=cp,
+            cf=CF,
             xf=XF,
         )
         lo_all = [t for t in tasks if t.criticality == "LO"]
@@ -118,6 +118,9 @@ def run_cf_point(cf: float,
         if processors is None:
             consec_fails += 1
             continue
+
+        consec_fails = 0
+        success += 1
 
         base = _deepcopy_procs(processors)
         for p in base:
@@ -149,11 +152,6 @@ def run_cf_point(cf: float,
             stable_hi_recovery(p.tasks, p.drop_list, beta=beta)
         accum["Proposed"] += _perf_h(p_prop, lo_all, beta)
 
-        consec_fails = 0
-
-
-        success += 1
-
     if success == 0:
         result = {m: float('nan') for m in methods}
     else:
@@ -170,34 +168,34 @@ def run_cf_point(cf: float,
 def main():
     set_beta(BETA)
 
-    cf_values = []
-    cf = CF_START
-    while cf <= CF_END + 1e-9:
-        cf_values.append(cf)
-        cf = round(cf + CF_STEP, 10)
+    cp_values = []
+    cp = CP_START
+    while cp <= CP_END + 1e-9:
+        cp_values.append(cp)
+        cp = round(cp + CP_STEP, 10)
 
     methods = ["Static", "AugOnly", "MaxCount", "Proposed"]
-    results: Dict[str, List[float]] = {m: [0.0] * len(cf_values) for m in methods}
-    total_attempts = [0] * len(cf_values)
-    total_feasible = [0] * len(cf_values)
+    results: Dict[str, List[float]] = {m: [0.0] * len(cp_values) for m in methods}
+    total_attempts = [0] * len(cp_values)
+    total_feasible = [0] * len(cp_values)
 
     t0 = time.time()
 
     with ProcessPoolExecutor(max_workers=NUM_THREADS) as executor:
         future_to_idx = {}
-        for i, cf_val in enumerate(cf_values):
-            fut = executor.submit(run_cf_point, cf_val, N_RUNS, BETA, base_seed=1)
-            future_to_idx[fut] = (i, cf_val)
+        for i, cp_val in enumerate(cp_values):
+            fut = executor.submit(run_cp_point, cp_val, N_RUNS, BETA, base_seed=1)
+            future_to_idx[fut] = (i, cp_val)
 
         for fut in as_completed(future_to_idx):
-            i, cf_val = future_to_idx[fut]
+            i, cp_val = future_to_idx[fut]
             perfs = fut.result()
             for m in methods:
                 results[m][i] = perfs[m]
             total_attempts[i] = perfs.get("total_attempts", 0)
             total_feasible[i] = perfs.get("feasible", 0)
             elapsed = time.time() - t0
-            print(f"[{elapsed:6.1f}s]  CF={cf_val:.1f}  "
+            print(f"[{elapsed:6.1f}s]  CP={cp_val:.1f}  "
                   f"feas={total_feasible[i]}/{total_attempts[i]}  "
                   f"Static={perfs['Static']:.4f}  "
                   f"AugOnly={perfs['AugOnly']:.4f}  "
@@ -210,19 +208,19 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["CF", "TotalAttempts", "Feasible"] + methods)
-        for i, cf_val in enumerate(cf_values):
-            row = [f"{cf_val:.1f}", str(total_attempts[i]), str(total_feasible[i])]
+        writer.writerow(["CP", "TotalAttempts", "Feasible"] + methods)
+        for i, cp_val in enumerate(cp_values):
+            row = [f"{cp_val:.1f}", str(total_attempts[i]), str(total_feasible[i])]
             for m in methods:
                 row.append(f"{results[m][i]:.6f}")
             writer.writerow(row)
     print(f"Saved: {OUTPUT_CSV}")
 
-    _plot(cf_values, results, OUTPUT_PLOT)
+    _plot(cp_values, results, OUTPUT_PLOT)
     print(f"Saved: {OUTPUT_PLOT}")
 
 
-def _plot(cf_values, results, path):
+def _plot(cp_values, results, path):
     import matplotlib.pyplot as plt
 
     plt.figure(figsize=(9, 5.5))
@@ -231,12 +229,12 @@ def _plot(cf_values, results, path):
               "Proposed": "#E91E63"}
 
     for method, perfs in results.items():
-        plt.plot(cf_values, perfs,
+        plt.plot(cp_values, perfs,
                  marker=markers.get(method, "x"),
                  color=colors.get(method, "black"),
                  linewidth=1.5, markersize=5, label=method)
 
-    plt.xlabel("CF  $(C^{\\mathrm{HI}} / C^{\\mathrm{LO}}$ for HI tasks)")
+    plt.xlabel("CP  (fraction of HI-criticality tasks)")
     plt.ylabel("Normalised performance $\\mathrm{Perf}^{\\mathrm{H}}$")
     plt.ylim(-0.02, 1.05)
     plt.grid(True, alpha=0.3)

@@ -55,6 +55,8 @@ UTIL_START = 0.40
 UTIL_END = 0.90
 UTIL_STEP = 0.05
 N_RUNS = 10000       # random task sets per utilisation point
+N_FEASIBLE = 500       # target number of feasible task sets
+MAX_CONSECUTIVE_FAILS = 500  # stop if this many consecutive partitions fail
 NUM_THREADS = 150     # process pool size
 
 OUTPUT_DIR = "experiments/vary_utilization/data"
@@ -100,10 +102,12 @@ def run_util_point(target_util: float,
     methods = ["Static", "AugOnly", "MaxCount", "Proposed"]
     accum: Dict[str, float] = {m: 0.0 for m in methods}
     success = 0
+    consec_fails = 0
+    total_attempts = 0
 
-    for run_idx in range(n_runs):
-        # Local seed for this run (ensures reproducibility across threads)
-        rng.seed(base_seed + int(target_util * 10000) + run_idx)
+    while success < N_FEASIBLE and consec_fails < MAX_CONSECUTIVE_FAILS:
+        rng.seed(base_seed + int(target_util * 10000) + total_attempts)
+        total_attempts += 1
 
         # 1. Generate
         tasks = generate_taskset(
@@ -119,7 +123,11 @@ def run_util_point(target_util: float,
         # 2. Partition
         processors = partition_tasks(tasks, NUM_PROCESSORS)
         if processors is None:
+            consec_fails += 1
             continue
+
+        consec_fails = 0
+        success += 1
 
         # 3. Shared base: LO augment + MC degrade
         base = _deepcopy_procs(processors)
@@ -156,12 +164,13 @@ def run_util_point(target_util: float,
             stable_hi_recovery(p.tasks, p.drop_list, beta=beta)
         accum["Proposed"] += _perf_h(p_prop, lo_all, beta)
 
-        success += 1
-
     if success == 0:
-        return {m: float('nan') for m in methods}
-
-    return {m: accum[m] / success for m in methods}
+        result = {m: float('nan') for m in methods}
+    else:
+        result = {m: accum[m] / success for m in methods}
+    result["total_attempts"] = total_attempts
+    result["feasible"] = success
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -177,30 +186,29 @@ def main():
         util_values.append(u)
         u = round(u + UTIL_STEP, 10)
 
-    results: Dict[str, List[float]] = {
-        "Static": [0.0] * len(util_values),
-        "AugOnly": [0.0] * len(util_values),
-        "MaxCount": [0.0] * len(util_values),
-        "Proposed": [0.0] * len(util_values),
-    }
+    methods = ["Static", "AugOnly", "MaxCount", "Proposed"]
+    results: Dict[str, List[float]] = {m: [0.0] * len(util_values) for m in methods}
+    total_attempts = [0] * len(util_values)
+    total_feasible = [0] * len(util_values)
 
     t0 = time.time()
 
     with ProcessPoolExecutor(max_workers=NUM_THREADS) as executor:
-        # Submit all jobs, keyed by index
         future_to_idx = {}
         for i, u_val in enumerate(util_values):
             fut = executor.submit(run_util_point, u_val, N_RUNS, BETA, base_seed=0)
             future_to_idx[fut] = (i, u_val)
 
-        # Collect as they complete
         for fut in as_completed(future_to_idx):
             i, u_val = future_to_idx[fut]
             perfs = fut.result()
-            for m in results:
+            for m in methods:
                 results[m][i] = perfs[m]
+            total_attempts[i] = perfs.get("total_attempts", 0)
+            total_feasible[i] = perfs.get("feasible", 0)
             elapsed = time.time() - t0
             print(f"[{elapsed:6.1f}s]  U={u_val:.2f}  "
+                  f"feas={total_feasible[i]}/{total_attempts[i]}  "
                   f"Static={perfs['Static']:.4f}  "
                   f"AugOnly={perfs['AugOnly']:.4f}  "
                   f"MaxCount={perfs['MaxCount']:.4f}  "
@@ -209,14 +217,13 @@ def main():
     elapsed = time.time() - t0
     print(f"\nTotal time: {elapsed:.1f}s")
 
-    # ---- Save CSV ----
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Utilization"] + list(results.keys()))
+        writer.writerow(["Utilization", "TotalAttempts", "Feasible"] + methods)
         for i, u_val in enumerate(util_values):
-            row = [f"{u_val:.2f}"]
-            for m in results:
+            row = [f"{u_val:.2f}", str(total_attempts[i]), str(total_feasible[i])]
+            for m in methods:
                 row.append(f"{results[m][i]:.6f}")
             writer.writerow(row)
     print(f"Saved: {OUTPUT_CSV}")

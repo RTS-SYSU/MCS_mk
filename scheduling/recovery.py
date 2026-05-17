@@ -24,6 +24,16 @@ from typing import List, Optional
 from core.task import Task
 from scheduling.sched_test import calculate_wcrt_hi
 
+# ---------------------------------------------------------------------------
+# Sacrifice unit  (kept for MaxCount compatibility)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _SacrificeUnit:
+    """One unit of sacrifice: reduce x_h of a retained LO task by 1."""
+    task: Task
+    loss: float     # beta * mu_j / (k_j - m_j)
+    density: float  # beta * mu_j / ((k_j - m_j) * C_LO_j)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -185,17 +195,6 @@ def _commit_action(action: _Action,
     else:
         action.task.mk.x_h += 1
 
-
-# ---------------------------------------------------------------------------
-# Sacrifice unit  (kept for MaxCount compatibility)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class _SacrificeUnit:
-    """One unit of sacrifice: reduce x_h of a retained LO task by 1."""
-    task: Task
-    loss: float     # beta * mu_j / (k_j - m_j)
-    density: float  # beta * mu_j / ((k_j - m_j) * C_LO_j)
 
 
 # ---------------------------------------------------------------------------

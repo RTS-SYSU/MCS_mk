@@ -43,7 +43,7 @@ BETA = 0.5
 UTIL_START = 0.40
 UTIL_END   = 0.90
 UTIL_STEP  = 0.05
-N_RUNS     = 1000
+N_RUNS     = 10000
 NUM_THREADS = 5
 
 OUTPUT_DIR = "experiments/amc_wh_comparison/data"
@@ -79,12 +79,17 @@ def run_util_point(target_util: float,
                    beta: float,
                    base_seed: int = 0) -> Dict[str, float]:
     """
-    Returns: feasible, + 6 perf columns:
+    Divide accumulators by n_runs (not by feasible count).
+    Partition failures contribute Perf = 0.
+
+    Returns:
+      feas_proposed, feas_static,
       Static_L, Static_S, Static_H, Proposed_L, Proposed_S, Proposed_H
     """
     accum = {"Static_L": 0.0, "Static_S": 0.0, "Static_H": 0.0,
              "Proposed_L": 0.0, "Proposed_S": 0.0, "Proposed_H": 0.0}
-    feasible = 0
+    feas_proposed = 0
+    feas_static = 0
 
     for run_idx in range(n_runs):
         random.seed(base_seed + int(target_util * 10000) + run_idx)
@@ -94,42 +99,55 @@ def run_util_point(target_util: float,
         )
         lo_all = [t for t in tasks if t.criticality == "LO"]
 
-        processors = partition_tasks(tasks, NUM_PROCESSORS)
-        if processors is None:
-            continue
-        feasible += 1
+        # ---- Static-AMC-WH: deepcopy FIRST, then partition with full x_l ----
+        tasks_static = copy.deepcopy(tasks)
+        orig_m = {}
+        for t in tasks_static:
+            if t.criticality == 'LO':
+                # orig_m[t.id] = t.mk.m
+                # t.mk.m = t.mk.k                       # effective util = C_LO / T
+                t.mk.x_l = t.mk.k - t.mk.m      # full augmentation
+                t.mk.x_s = 0
+                t.mk.x_h = 0
 
-        # ---- Static-AMC-WH ----
-        p_static = _deepcopy(processors)
-        perfs = run_static_amc(p_static, lo_all, beta)
-        accum["Static_L"] += perfs["L"]
-        accum["Static_S"] += perfs["S"]
-        accum["Static_H"] += perfs["H"]
+        p_static = partition_tasks(tasks_static, NUM_PROCESSORS)
 
-        # ---- Proposed ----
-        p_prop = _deepcopy(processors)
-        for proc in p_prop:
-            lo_mode_augment(proc.tasks, drop_list=proc.drop_list, beta=beta)
+        # for t in tasks_static:
+        #     if t.criticality == 'LO' and t.id in orig_m:
+        #         t.mk.m = orig_m[t.id]
 
-        accum["Proposed_L"] += _perf_mode(p_prop, lo_all, beta, 'L')
+        if p_static is not None:
+            feas_static += 1
+            perfs = run_static_amc(p_static, lo_all, beta)
+            accum["Static_L"] += perfs["L"]
+            accum["Static_S"] += perfs["S"]
+            accum["Static_H"] += perfs["H"]
 
-        drops_mc = [list(proc.drop_list) for proc in p_prop]
-        for proc in p_prop:
-            mode_switch_degrade(proc.tasks, drop_list=proc.drop_list, beta=beta)
+        # ---- Proposed: partition with baseline mk ----
+        p_prop = partition_tasks(tasks, NUM_PROCESSORS)
+        if p_prop is not None:
+            feas_proposed += 1
 
-        accum["Proposed_S"] += _perf_mode(p_prop, lo_all, beta, 'S', drops_mc)
+            for proc in p_prop:
+                lo_mode_augment(proc.tasks, drop_list=proc.drop_list, beta=beta)
+            accum["Proposed_L"] += _perf_mode(p_prop, lo_all, beta, 'L')
 
-        for proc in p_prop:
-            stable_hi_recovery(proc.tasks, proc.drop_list, beta=beta)
+            drops_mc = [list(proc.drop_list) for proc in p_prop]
+            for proc in p_prop:
+                mode_switch_degrade(proc.tasks, drop_list=proc.drop_list, beta=beta)
+            accum["Proposed_S"] += _perf_mode(p_prop, lo_all, beta, 'S', drops_mc)
 
-        accum["Proposed_H"] += _perf_mode(p_prop, lo_all, beta, 'H')
+            for proc in p_prop:
+                stable_hi_recovery(proc.tasks, proc.drop_list, beta=beta)
+            accum["Proposed_H"] += _perf_mode(p_prop, lo_all, beta, 'H')
 
     cols = ["Static_L", "Static_S", "Static_H",
             "Proposed_L", "Proposed_S", "Proposed_H"]
-    if feasible == 0:
-        return {"feasible": 0, **{c: float('nan') for c in cols}}
-
-    return {"feasible": feasible, **{c: accum[c] / feasible for c in cols}}
+    return {
+        "feas_proposed": feas_proposed,
+        "feas_static": feas_static,
+        **{c: accum[c] / n_runs for c in cols},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +163,8 @@ def main():
         util_values.append(u)
         u = round(u + UTIL_STEP, 10)
 
-    cols = ["feasible", "Static_L", "Static_S", "Static_H",
+    cols = ["feas_proposed", "feas_static",
+            "Static_L", "Static_S", "Static_H",
             "Proposed_L", "Proposed_S", "Proposed_H"]
     results: Dict[str, List[float]] = {c: [0.0] * len(util_values) for c in cols}
 
@@ -162,11 +181,13 @@ def main():
             r = fut.result()
             for c in cols:
                 results[c][i] = r[c]
-            rate = r["feasible"] / N_RUNS * 100
+            rate_p = r["feas_proposed"] / N_RUNS * 100
+            rate_s = r["feas_static"] / N_RUNS * 100
             elapsed = time.time() - t0
-            print(f"[{elapsed:7.1f}s]  U={u_val:.2f}  feas={rate:.1f}%  "
-                  f"Stat(L={r['Static_L']:.4f} S={r['Static_S']:.4f} H={r['Static_H']:.4f})  "
-                  f"Prop(L={r['Proposed_L']:.4f} S={r['Proposed_S']:.4f} H={r['Proposed_H']:.4f})")
+            print(f"[{elapsed:7.1f}s]  U={u_val:.2f}  "
+                  f"feas(P)={rate_p:.1f}%  feas(S)={rate_s:.1f}%")
+            print(f"           Stat(L={r['Static_L']:.4f} S={r['Static_S']:.4f} H={r['Static_H']:.4f})")
+            print(f"           Prop(L={r['Proposed_L']:.4f} S={r['Proposed_S']:.4f} H={r['Proposed_H']:.4f})")
 
     elapsed = time.time() - t0
     print(f"\nTotal time: {elapsed:.1f}s")
@@ -175,10 +196,15 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Utilization", "FeasibilityRate"] + cols[1:])
+        writer.writerow(["Utilization",
+                          "FeasRate_Proposed", "FeasRate_Static",
+                          "Static_L", "Static_S", "Static_H",
+                          "Proposed_L", "Proposed_S", "Proposed_H"])
         for i, u_val in enumerate(util_values):
-            row = [f"{u_val:.2f}", f"{results['feasible'][i] / N_RUNS:.6f}"]
-            for c in cols[1:]:
+            row = [f"{u_val:.2f}",
+                   f"{results['feas_proposed'][i] / N_RUNS:.6f}",
+                   f"{results['feas_static'][i] / N_RUNS:.6f}"]
+            for c in cols[2:]:
                 row.append(f"{results[c][i]:.6f}")
             writer.writerow(row)
     print(f"Saved: {OUTPUT_CSV}")

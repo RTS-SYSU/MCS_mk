@@ -44,6 +44,8 @@ UTIL_START = 0.40
 UTIL_END   = 0.90
 UTIL_STEP  = 0.05
 N_RUNS     = 1000
+N_FEASIBLE = 500          # target feasible sets per point
+MAX_CONSECUTIVE_FAILS = 100  # stop if consecutive fails exceed this
 NUM_THREADS = 5
 
 OUTPUT_DIR = "experiments/suspend_recovery/data"
@@ -80,9 +82,12 @@ def run_util_point(target_util: float,
     """
     accum = {"suspended": 0.0, "recovered": 0.0, "Perf_H": 0.0}
     feasible = 0
+    consec_fails = 0
+    total_attempts = 0
 
-    for run_idx in range(n_runs):
-        random.seed(base_seed + int(target_util * 10000) + run_idx)
+    while feasible < N_FEASIBLE and consec_fails < MAX_CONSECUTIVE_FAILS:
+        total_attempts += 1
+        random.seed(base_seed + int(target_util * 10000) + total_attempts)
         tasks = generate_taskset(
             total_processor=NUM_PROCESSORS, total_task=TOTAL_TASKS,
             targetU=target_util, cp=CP, cf=CF, xf=XF,
@@ -91,18 +96,17 @@ def run_util_point(target_util: float,
 
         processors = partition_tasks(tasks, NUM_PROCESSORS)
         if processors is None:
+            consec_fails += 1
             continue
+        consec_fails = 0
         feasible += 1
 
-        # Count suspended (after classification, before recovery)
         n_suspended = sum(len(p.drop_list) for p in processors)
 
-        # LO augment + MC degrade
         for p in processors:
             lo_mode_augment(p.tasks, drop_list=p.drop_list, beta=BETA)
             mode_switch_degrade(p.tasks, drop_list=p.drop_list, beta=BETA)
 
-        # HI recovery — returns list of recovered tasks
         n_recovered = 0
         for p in processors:
             rec = stable_hi_recovery(p.tasks, p.drop_list, beta=BETA)
@@ -113,15 +117,16 @@ def run_util_point(target_util: float,
         accum["Perf_H"] += _perf_h(processors, lo_all, BETA)
 
     if feasible == 0:
-        return {"feasible": 0,
-                "suspended": float('nan'), "recovered": float('nan'),
-                "rec_rate": float('nan'), "Perf_H": float('nan')}
-
-    return {"feasible": feasible,
-            "suspended":  accum["suspended"]  / feasible,
-            "recovered":  accum["recovered"]  / feasible,
-            "rec_rate":   accum["recovered"] / accum["suspended"] if accum["suspended"] > 0 else 1.0,
-            "Perf_H":     accum["Perf_H"]     / feasible}
+        result = {"suspended": float('nan'), "recovered": float('nan'),
+                  "rec_rate": float('nan'), "Perf_H": float('nan')}
+    else:
+        result = {"suspended":  accum["suspended"]  / feasible,
+                  "recovered":  accum["recovered"]  / feasible,
+                  "rec_rate":   accum["recovered"] / accum["suspended"] if accum["suspended"] > 0 else 1.0,
+                  "Perf_H":     accum["Perf_H"]     / feasible}
+    result["total_attempts"] = total_attempts
+    result["feasible"] = feasible
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -137,8 +142,10 @@ def main():
         util_values.append(u)
         u = round(u + UTIL_STEP, 10)
 
-    cols = ["feasible", "suspended", "recovered", "rec_rate", "Perf_H"]
-    results: Dict[str, List[float]] = {c: [0.0] * len(util_values) for c in cols}
+    perf_cols = ["suspended", "recovered", "rec_rate", "Perf_H"]
+    results: Dict[str, List[float]] = {c: [0.0] * len(util_values) for c in perf_cols}
+    total_attempts = [0] * len(util_values)
+    total_feasible = [0] * len(util_values)
 
     t0 = time.time()
 
@@ -151,27 +158,27 @@ def main():
         for fut in as_completed(future_to_idx):
             i, u_val = future_to_idx[fut]
             r = fut.result()
-            for c in cols:
+            for c in perf_cols:
                 results[c][i] = r[c]
-            rate = r["feasible"] / N_RUNS * 100
+            total_attempts[i] = r.get("total_attempts", 0)
+            total_feasible[i] = r.get("feasible", 0)
             elapsed = time.time() - t0
-            print(f"[{elapsed:7.1f}s]  U={u_val:.2f}  feas={rate:.1f}%  "
+            print(f"[{elapsed:7.1f}s]  U={u_val:.2f}  "
+                  f"feas={total_feasible[i]}/{total_attempts[i]}  "
                   f"susp={r['suspended']:.1f}  rec={r['recovered']:.1f}  "
                   f"rate={r['rec_rate']*100:.1f}%  Perf_H={r['Perf_H']:.4f}")
 
     elapsed = time.time() - t0
     print(f"\nTotal time: {elapsed:.1f}s")
 
-    # ---- Save CSV ----
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Utilization", "FeasibilityRate", "Suspended",
-                          "Recovered", "RecoveryRate", "Perf_H"])
+        writer.writerow(["Utilization", "TotalAttempts", "Feasible",
+                          "Suspended", "Recovered", "RecoveryRate", "Perf_H"])
         for i, u_val in enumerate(util_values):
             writer.writerow([
-                f"{u_val:.2f}",
-                f"{results['feasible'][i] / N_RUNS:.6f}",
+                f"{u_val:.2f}", str(total_attempts[i]), str(total_feasible[i]),
                 f"{results['suspended'][i]:.4f}",
                 f"{results['recovered'][i]:.4f}",
                 f"{results['rec_rate'][i]:.4f}",
@@ -188,13 +195,12 @@ def main():
         f.write(r"  \label{tab:suspend_recovery}" + "\n")
         f.write(r"  \begin{tabular}{cccccc}" + "\n")
         f.write(r"    \toprule" + "\n")
-        f.write(r"    $U$ & Feas. & Susp. & Recov. & Rec.Rate & $\mathrm{Perf}^{\mathrm{H}}$ \\" + "\n")
+        f.write(r"    $U$ & Feas./Att. & Susp. & Recov. & Rec.Rate & $\mathrm{Perf}^{\mathrm{H}}$ \\" + "\n")
         f.write(r"    \midrule" + "\n")
         for i, u_val in enumerate(util_values):
-            fr = results["feasible"][i] / N_RUNS
-            if fr == 0:
+            if total_feasible[i] == 0:
                 continue
-            f.write(f"    {u_val:.2f} & {fr:.2f} & "
+            f.write(f"    {u_val:.2f} & {total_feasible[i]}/{total_attempts[i]} & "
                     f"{results['suspended'][i]:.1f} & "
                     f"{results['recovered'][i]:.1f} & "
                     f"{results['rec_rate'][i]*100:.0f}\\% & "
@@ -246,5 +252,5 @@ if __name__ == "__main__":
     import sys
     if "--test" in sys.argv:
         print("=== Quick test mode (1 run per point) ===")
-        N_RUNS = 1
+        N_FEASIBLE = 1
     main()
