@@ -55,7 +55,7 @@ UTIL_START = 0.40
 UTIL_END = 0.90
 UTIL_STEP = 0.05
 N_RUNS = 10000       # random task sets per utilisation point
-NUM_THREADS = 10     # process pool size
+NUM_THREADS = 150     # process pool size
 
 OUTPUT_DIR = "experiments/vary_utilization/data"
 OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vary_utilization.csv")

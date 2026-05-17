@@ -57,7 +57,7 @@ CF_START = 1.0
 CF_END = 3.0
 CF_STEP = 0.4
 N_RUNS = 10000
-NUM_THREADS = 10
+NUM_THREADS = 150
 
 OUTPUT_DIR = "experiments/vary_cf/data"
 OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vary_cf.csv")

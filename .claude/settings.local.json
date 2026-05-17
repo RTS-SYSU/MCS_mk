@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python -m py_compile scheduling/recovery.py; Write-Output \"OK\")",
+      "PowerShell(pip install *)",
+      "PowerShell(python -m experiments.test_pipeline)",
+      "PowerShell(python -m experiments.exp_vary_utilization --test)",
+      "PowerShell(python -m py_compile experiments/exp_vary_utilization.py; Write-Output \"OK\")",
+      "PowerShell(python -m experiments.exp_vary_cf --test)",
+      "PowerShell(python -m experiments.exp_vary_mk --test)",
+      "PowerShell(python -m experiments.mode_performance.exp_vary_utilization --test)",
+      "PowerShell(python -m py_compile experiments/vary_utilization/exp.py; python -m py_compile experiments/vary_cf/exp.py; python -m py_compile experiments/vary_mk/exp.py; Write-Output \"all OK\")",
+      "PowerShell(git add *)",
+      "PowerShell(git push *)",
+      "PowerShell(python -m py_compile scheduling/recovery.py; python -m py_compile experiments/comparison/maxcount_recovery.py; Write-Output \"compile OK\")"
+    ]
+  }
+}
